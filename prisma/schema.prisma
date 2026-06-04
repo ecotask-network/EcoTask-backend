@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  wallet    String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  proofs Proof[]
+}
+
+model Task {
+  id        String   @id @default(uuid())
+  title     String
+  type      String
+  rewardAmount Float  @map("reward_amount")
+  lat       Float
+  lng       Float
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime? @map("expires_at")
+
+  proofs Proof[]
+
+  @@map("tasks")
+}
+
+model Proof {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  taskId    String   @map("task_id")
+  status    String   @default("PENDING")
+  lat       Float?
+  lng       Float?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+  task Task @relation(fields: [taskId], references: [id])
+  verifications Verification[]
+
+  @@map("proofs")
+}
+
+model Verification {
+  id         String   @id @default(uuid())
+  proofId    String   @map("proof_id")
+  verifierId String   @map("verifier_id")
+  verdict    String
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  proof Proof @relation(fields: [proofId], references: [id])
+
+  @@map("verifications")
+}
