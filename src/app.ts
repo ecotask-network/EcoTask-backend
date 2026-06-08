@@ -1,5 +1,9 @@
+/// <reference path="./types/express.d.ts" />
+
 import express from "express";
 import cors from "cors";
+import authRoutes from "./routes/auth.js";
+import userRoutes from "./routes/users.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,6 +14,9 @@ app.use(express.json());
 app.get("/", (_req, res) => {
   res.json({ status: "ok", service: "ecotask-backend" });
 });
+
+app.use("/auth", authRoutes);
+app.use("/users", userRoutes);
 
 app.listen(PORT, () => {
   console.log(`EcoTask backend running on http://localhost:${PORT}`);
