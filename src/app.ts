@@ -5,6 +5,7 @@ import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 import taskRoutes from "./routes/tasks.js";
+import proofRoutes from "./routes/proofs.js";
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.get("/", (_req, res) => {
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/tasks", taskRoutes);
+app.use("/proofs", proofRoutes);
 
 if (process.env.NODE_ENV !== "test") {
   const PORT = process.env.PORT || 3000;
