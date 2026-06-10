@@ -7,6 +7,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum ProofStatus {
+  PENDING
+  VERIFYING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id        String   @id @default(uuid())
   wallet    String   @unique
@@ -38,19 +45,33 @@ model Task {
 }
 
 model Proof {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  taskId    String   @map("task_id")
-  status    String   @default("PENDING")
+  id        String      @id @default(uuid())
+  userId    String      @map("user_id")
+  taskId    String      @map("task_id")
+  status    ProofStatus @default(PENDING)
   lat       Float?
   lng       Float?
-  createdAt DateTime @default(now()) @map("created_at")
+  notes     String?
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
 
-  user User @relation(fields: [userId], references: [id])
-  task Task @relation(fields: [taskId], references: [id])
+  user       User          @relation(fields: [userId], references: [id])
+  task       Task          @relation(fields: [taskId], references: [id])
+  photos     ProofPhoto[]
   verifications Verification[]
 
   @@map("proofs")
+}
+
+model ProofPhoto {
+  id       String @id @default(uuid())
+  proofId  String @map("proof_id")
+  cid      String
+  filename String
+
+  proof Proof @relation(fields: [proofId], references: [id])
+
+  @@map("proof_photos")
 }
 
 model Verification {
