@@ -23,6 +23,16 @@ export function isWithinZone(
   return calculateDistance(lat, lng, centerLat, centerLng) <= radiusKm;
 }
 
+export function isWithinRadius(
+  lat: number,
+  lng: number,
+  centerLat: number,
+  centerLng: number,
+  radiusMeters: number,
+): boolean {
+  return isWithinZone(lat, lng, centerLat, centerLng, radiusMeters / 1000);
+}
+
 export function buildBoundingBoxFilter(
   swLat?: number,
   swLng?: number,

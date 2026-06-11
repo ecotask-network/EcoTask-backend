@@ -33,8 +33,10 @@ model Task {
   description String?
   type      String
   rewardAmount Float  @map("reward_amount")
+  rewardToken String? @map("reward_token")
   lat       Float
   lng       Float
+  radiusMeters Float  @default(100) @map("radius_meters")
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
