@@ -18,6 +18,10 @@ jest.mock("../../src/utils/prisma", () => ({
   },
 }));
 
+jest.mock("../../src/workers/verificationWorker", () => ({
+  enqueueVerification: jest.fn(),
+}));
+
 jest.mock("../../src/services/ipfsService", () => ({
   uploadToIPFS: jest.fn().mockResolvedValue("mock-cid-test"),
   uploadMultipleToIPFS: jest.fn(),

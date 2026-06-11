@@ -5,6 +5,7 @@ import prisma from "../utils/prisma.js";
 import { submitProofSchema } from "../utils/validation.js";
 import { uploadToIPFS } from "../services/ipfsService.js";
 import { isWithinZone } from "../services/geoService.js";
+import { enqueueVerification } from "../workers/verificationWorker.js";
 
 async function extractGps(filePath: string): Promise<{ lat: number; lng: number } | null> {
   const tags = await ExifReader.load(fs.readFileSync(filePath));
@@ -85,6 +86,8 @@ export async function submitProof(req: Request, res: Response) {
       console.warn(`GPS mismatch for proof ${proof.id}: body (${bodyLat},${bodyLng}) vs photo (${gpsFromPhoto.lat},${gpsFromPhoto.lng})`);
     }
   }
+
+  await enqueueVerification(proof.id);
 
   const result = await prisma.proof.findUnique({
     where: { id: proof.id },

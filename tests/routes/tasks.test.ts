@@ -2,6 +2,10 @@ import request from "supertest";
 import app from "../../src/app";
 import jwt from "jsonwebtoken";
 
+jest.mock("../../src/workers/verificationWorker", () => ({
+  enqueueVerification: jest.fn(),
+}));
+
 jest.mock("../../src/models/task", () => ({
   listTasks: jest.fn(),
   getTaskById: jest.fn(),

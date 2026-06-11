@@ -2,6 +2,10 @@ import request from "supertest";
 import app from "../../src/app";
 import { generateChallenge } from "../../src/services/stellarService";
 
+jest.mock("../../src/workers/verificationWorker", () => ({
+  enqueueVerification: jest.fn(),
+}));
+
 const MOCK_WALLET = "GBMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCK00";
 
 describe("Auth Routes", () => {

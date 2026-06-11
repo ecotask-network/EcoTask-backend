@@ -7,6 +7,11 @@ import userRoutes from "./routes/users.js";
 import taskRoutes from "./routes/tasks.js";
 import proofRoutes from "./routes/proofs.js";
 
+if (process.env.NODE_ENV !== "test") {
+  import("./workers/verificationWorker.js");
+  import("./workers/rewardWorker.js");
+}
+
 const app = express();
 
 app.use(cors());
