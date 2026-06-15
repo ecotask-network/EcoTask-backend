@@ -9,6 +9,7 @@
     "test": "jest --passWithNoTests",
     "test:coverage": "jest --passWithNoTests --coverage",
     "test:integration": "jest --passWithNoTests --testMatch '**/tests/integration/**/*.test.ts'",
+    "test:e2e": "jest --passWithNoTests --testMatch '**/tests/e2e/**/*.test.ts'",
     "db:migrate": "prisma migrate dev",
     "db:seed": "ts-node prisma/seed.ts",
     "lint": "eslint src/"
