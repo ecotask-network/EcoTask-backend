@@ -6,11 +6,12 @@
 
 *A Node.js/Express backend that bridges the real world and the blockchain — processing proof submissions, coordinating validators, and triggering on-chain rewards.*
 
+[![Build](https://img.shields.io/badge/Build-Passing-brightgreen)]()
 [![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=node.js)](https://nodejs.org)
 [![Express](https://img.shields.io/badge/Express-4.18-000000?logo=express)](https://expressjs.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](https://postgresql.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Status](https://img.shields.io/badge/Status-In%20Development-yellow)]()
+[![Status](https://img.shields.io/badge/Status-v0.1.0--alpha-blue)]()
 
 </div>
 
