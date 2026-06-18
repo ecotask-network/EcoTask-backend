@@ -28,7 +28,7 @@ const worker = new Worker(
     if (result.verdict === "approved") {
       await prisma.proof.update({ where: { id: proofId }, data: { status: "APPROVED" } });
 
-      const { rewardQueue } = await import("./rewardWorker");
+      const { rewardQueue } = await import("./rewardWorker.js");
       await rewardQueue.add("payout", { proofId });
     } else if (result.verdict === "rejected") {
       await prisma.proof.update({ where: { id: proofId }, data: { status: "REJECTED" } });

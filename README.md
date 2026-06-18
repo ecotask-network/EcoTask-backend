@@ -6,11 +6,15 @@
 
 *A Node.js/Express backend that bridges the real world and the blockchain — processing proof submissions, coordinating validators, and triggering on-chain rewards.*
 
-[![Build](https://img.shields.io/badge/Build-Passing-brightgreen)]()
+[![CI](https://github.com/ecotask-network/EcoTask-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/ecotask-network/EcoTask-backend/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=node.js)](https://nodejs.org)
 [![Express](https://img.shields.io/badge/Express-4.18-000000?logo=express)](https://expressjs.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](https://postgresql.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6?logo=typescript)](https://www.typescriptlang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Conventional Commits](https://img.shields.io/badge/Commits-Conventional-FE5196?logo=git)](https://www.conventionalcommits.org)
+[![Contributor Covenant](https://img.shields.io/badge/Code%20of%20Conduct-Contributor%20Covenant-4baaaa)](CODE_OF_CONDUCT.md)
 [![Status](https://img.shields.io/badge/Status-v0.1.0--alpha-blue)]()
 
 </div>

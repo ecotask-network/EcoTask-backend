@@ -26,6 +26,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: mkdir -p /tmp/uploads
       - run: npx prisma generate
       - run: npx prisma migrate deploy
         env:
