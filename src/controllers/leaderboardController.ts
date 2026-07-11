@@ -1,28 +1,27 @@
-import { Request, Response } from "express";
-import prisma from "../utils/prisma.js";
+import { Request, Response } from 'express';
+import prisma from '../utils/prisma.js';
 
 export async function getLeaderboard(req: Request, res: Response) {
   const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-  const period = (req.query.period as string) || "all";
+  const period = (req.query.period as string) || 'all';
 
   let dateFilter: Date | undefined;
-  if (period === "week") {
+  if (period === 'week') {
     dateFilter = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  } else if (period === "month") {
+  } else if (period === 'month') {
     dateFilter = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   }
 
   const where = {
-    status: "APPROVED" as const,
+    status: 'APPROVED' as const,
     ...(dateFilter ? { createdAt: { gte: dateFilter } } : {}),
   };
 
   const results = await prisma.proof.groupBy({
-    by: ["userId"],
+    by: ['userId'],
     where,
-    _count: { id: true },
-    _sum: { taskId: true },
-    orderBy: { _count: { id: "desc" } },
+    _count: true,
+    orderBy: { _count: { id: 'desc' } },
     take: limit,
   });
 
@@ -37,10 +36,10 @@ export async function getLeaderboard(req: Request, res: Response) {
   const leaderboard = results.map((entry, index) => ({
     rank: index + 1,
     userId: entry.userId,
-    wallet: userMap.get(entry.userId)?.wallet || "",
+    wallet: userMap.get(entry.userId)?.wallet || '',
     name: userMap.get(entry.userId)?.name || null,
     avatarUrl: userMap.get(entry.userId)?.avatarUrl || null,
-    approvedProofs: entry._count.id,
+    approvedProofs: entry._count ?? 0,
   }));
 
   res.json({ leaderboard, period });
