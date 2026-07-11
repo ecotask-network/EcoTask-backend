@@ -9,6 +9,7 @@ import proofRoutes from "./routes/proofs.js";
 import healthRoutes from "./routes/health.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiLimiter, authLimiter, proofLimiter } from "./middleware/rateLimit.js";
+import { sanitizeInput } from "./middleware/sanitize.js";
 
 if (process.env.NODE_ENV !== "test") {
   import("./workers/verificationWorker.js");
@@ -19,6 +20,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(sanitizeInput);
 
 app.use("/api", apiLimiter);
 
