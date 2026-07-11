@@ -25,6 +25,7 @@ model User {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   proofs Proof[]
+  claims TaskClaim[]
 }
 
 model Task {
@@ -41,9 +42,25 @@ model Task {
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
 
-  proofs Proof[]
+  proofs  Proof[]
+  claims  TaskClaim[]
 
   @@map("tasks")
+}
+
+model TaskClaim {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  taskId    String   @map("task_id")
+  status    String   @default("active")
+  claimedAt DateTime @default(now()) @map("claimed_at")
+  expiresAt DateTime @map("expires_at")
+
+  user User @relation(fields: [userId], references: [id])
+  task Task @relation(fields: [taskId], references: [id])
+
+  @@unique([taskId, userId])
+  @@map("task_claims")
 }
 
 model Proof {
