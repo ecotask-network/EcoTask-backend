@@ -6,6 +6,7 @@ import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 import taskRoutes from "./routes/tasks.js";
 import proofRoutes from "./routes/proofs.js";
+import healthRoutes from "./routes/health.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiLimiter, authLimiter, proofLimiter } from "./middleware/rateLimit.js";
 
@@ -25,6 +26,7 @@ app.get("/", (_req, res) => {
   res.json({ status: "ok", service: "ecotask-backend" });
 });
 
+app.use("/health", healthRoutes);
 app.use("/auth", authLimiter, authRoutes);
 app.use("/users", userRoutes);
 app.use("/tasks", taskRoutes);
