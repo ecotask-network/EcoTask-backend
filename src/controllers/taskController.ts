@@ -15,8 +15,8 @@ export async function listTasks(req: Request, res: Response) {
     swLat, swLng, neLat, neLng,
   };
 
-  const tasks = await taskModel.listTasks(filters);
-  return res.json(tasks);
+  const { items, nextCursor } = await taskModel.listTasks(filters);
+  return res.json({ data: items, nextCursor });
 }
 
 export async function getTask(req: Request, res: Response) {

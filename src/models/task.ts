@@ -9,10 +9,13 @@ export interface TaskFilters {
   swLng?: number;
   neLat?: number;
   neLng?: number;
+  cursor?: string;
+  limit?: number;
 }
 
 export async function listTasks(filters: TaskFilters = {}) {
   const where: Record<string, unknown> = {};
+  const limit = filters.limit || 20;
 
   if (filters.type) where.type = filters.type;
   if (filters.status) where.status = filters.status;
@@ -36,10 +39,21 @@ export async function listTasks(filters: TaskFilters = {}) {
     ];
   }
 
-  return prisma.task.findMany({
+  if (filters.cursor) {
+    where.createdAt = { lt: new Date(filters.cursor) };
+  }
+
+  const tasks = await prisma.task.findMany({
     where,
     orderBy: { createdAt: "desc" },
+    take: limit + 1,
   });
+
+  const hasMore = tasks.length > limit;
+  const items = hasMore ? tasks.slice(0, limit) : tasks;
+  const nextCursor = hasMore ? items[items.length - 1].createdAt.toISOString() : null;
+
+  return { items, nextCursor };
 }
 
 export async function getTaskById(id: string) {

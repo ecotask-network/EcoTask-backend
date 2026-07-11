@@ -42,6 +42,8 @@ export const listTasksQuerySchema = z.object({
   swLng: z.coerce.number().min(-180).max(180).optional(),
   neLat: z.coerce.number().min(-90).max(90).optional(),
   neLng: z.coerce.number().min(-180).max(180).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().min(1).max(100).default(20).optional(),
 });
 
 export const submitProofSchema = z.object({
