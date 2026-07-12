@@ -15,6 +15,7 @@ export default tseslint.config(
       "@typescript-eslint/no-require-imports": "error",
       "no-console": "off",
       "prefer-const": "error",
+      "@typescript-eslint/triple-slash-reference": "off",
     },
   },
   {
