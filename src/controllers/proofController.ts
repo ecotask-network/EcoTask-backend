@@ -96,9 +96,14 @@ export async function submitProof(req: Request, res: Response) {
       0.1,
     );
     if (!withinRadius) {
-      console.warn(
-        `GPS mismatch for proof ${proof.id}: body (${bodyLat},${bodyLng}) vs photo (${gpsFromPhoto.lat},${gpsFromPhoto.lng})`,
-      );
+      logger.warn({
+        proofId: proof.id,
+        bodyLat,
+        bodyLng,
+        photoLat: gpsFromPhoto.lat,
+        photoLng: gpsFromPhoto.lng,
+        message: 'GPS mismatch between body and photo',
+      });
     }
   }
 
