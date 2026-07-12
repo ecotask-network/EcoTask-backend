@@ -1,5 +1,5 @@
-import prisma from "../utils/prisma.js";
-import logger from "../utils/logger.js";
+import prisma from '../utils/prisma.js';
+import logger from '../utils/logger.js';
 
 export interface AuditLogEntry {
   userId?: string;
@@ -17,7 +17,7 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
       VALUES (gen_random_uuid(), ${entry.userId || null}, ${entry.action}, ${entry.resource}, ${entry.resourceId || null}, ${JSON.stringify(entry.details || {})}::jsonb, ${entry.ip || null}, NOW())
     `;
   } catch (err) {
-    logger.error({ err, auditEntry: entry, message: "Failed to write audit log" });
+    logger.error({ err, auditEntry: entry, message: 'Failed to write audit log' });
   }
 }
 
@@ -45,15 +45,15 @@ export async function getAuditLogs(params: {
     values.push(params.resourceId);
   }
 
-  const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
   const limit = params.limit || 50;
   const offset = params.offset || 0;
 
-  const query = `SELECT * FROM "AuditLog" ${whereClause} ORDER BY "createdAt" DESC LIMIT ${limit} OFFSET ${offset}`;
+  const query = `SELECT * FROM "AuditLog" ${whereClause} ORDER BY "createdAt" DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
   const countQuery = `SELECT COUNT(*) FROM "AuditLog" ${whereClause}`;
 
   const [logs, countResult] = await Promise.all([
-    prisma.$queryRawUnsafe(query, ...values),
+    prisma.$queryRawUnsafe(query, ...values, limit, offset),
     prisma.$queryRawUnsafe(countQuery, ...values),
   ]);
 
