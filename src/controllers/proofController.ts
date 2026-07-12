@@ -1,13 +1,16 @@
-import { Request, Response } from "express";
-import ExifReader from "exifreader";
-import fs from "fs";
-import prisma from "../utils/prisma.js";
-import { submitProofSchema } from "../utils/validation.js";
-import { uploadToIPFS } from "../services/ipfsService.js";
-import { isWithinZone } from "../services/geoService.js";
-import { enqueueVerification } from "../workers/verificationWorker.js";
+import { Request, Response } from 'express';
+import ExifReader from 'exifreader';
+import fs from 'fs';
+import prisma from '../utils/prisma.js';
+import { submitProofSchema } from '../utils/validation.js';
+import { uploadToIPFS } from '../services/ipfsService.js';
+import { isWithinZone } from '../services/geoService.js';
+import { enqueueVerification } from '../workers/verificationWorker.js';
+import logger from '../utils/logger.js';
 
-async function extractGps(filePath: string): Promise<{ lat: number; lng: number } | null> {
+async function extractGps(
+  filePath: string,
+): Promise<{ lat: number; lng: number } | null> {
   const tags = await ExifReader.load(fs.readFileSync(filePath));
   if (tags.GPSLatitude && tags.GPSLongitude) {
     const lat = parseFloat(tags.GPSLatitude.description as string);
@@ -21,24 +24,26 @@ async function extractGps(filePath: string): Promise<{ lat: number; lng: number 
 export async function submitProof(req: Request, res: Response) {
   const parsed = submitProofSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: "invalid request body", details: parsed.error.flatten() });
+    return res
+      .status(400)
+      .json({ error: 'invalid request body', details: parsed.error.flatten() });
   }
 
   const { taskId, lat: bodyLat, lng: bodyLng, notes } = parsed.data;
 
   const task = await prisma.task.findUnique({ where: { id: taskId } });
   if (!task) {
-    return res.status(404).json({ error: "task not found" });
+    return res.status(404).json({ error: 'task not found' });
   }
-  if (task.status !== "ACTIVE") {
-    return res.status(400).json({ error: "task is not active" });
+  if (task.status !== 'ACTIVE') {
+    return res.status(400).json({ error: 'task is not active' });
   }
 
   const proof = await prisma.proof.create({
     data: {
       userId: req.user!.userId,
       taskId,
-      status: "PENDING",
+      status: 'PENDING',
       notes,
     },
   });
@@ -60,6 +65,14 @@ export async function submitProof(req: Request, res: Response) {
           cid,
           filename: file.originalname,
         },
+      });
+
+      fs.promises.unlink(file.path).catch((err) => {
+        logger.warn({
+          err,
+          path: file.path,
+          message: 'Failed to clean up uploaded file',
+        });
       });
     }
   }
@@ -83,7 +96,9 @@ export async function submitProof(req: Request, res: Response) {
       0.1,
     );
     if (!withinRadius) {
-      console.warn(`GPS mismatch for proof ${proof.id}: body (${bodyLat},${bodyLng}) vs photo (${gpsFromPhoto.lat},${gpsFromPhoto.lng})`);
+      console.warn(
+        `GPS mismatch for proof ${proof.id}: body (${bodyLat},${bodyLng}) vs photo (${gpsFromPhoto.lat},${gpsFromPhoto.lng})`,
+      );
     }
   }
 
@@ -104,7 +119,7 @@ export async function getProof(req: Request, res: Response) {
   });
 
   if (!proof) {
-    return res.status(404).json({ error: "proof not found" });
+    return res.status(404).json({ error: 'proof not found' });
   }
 
   return res.json(proof);
@@ -120,7 +135,7 @@ export async function getUserProofs(req: Request, res: Response) {
     prisma.proof.findMany({
       where: { userId },
       include: { photos: true, task: true },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
     }),
