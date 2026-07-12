@@ -37,7 +37,7 @@ app.use(
       config.corsOrigin === '*' ? '*' : config.corsOrigin.split(',').map((o) => o.trim()),
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(sanitizeInput);
 
 app.use('/api', apiLimiter);

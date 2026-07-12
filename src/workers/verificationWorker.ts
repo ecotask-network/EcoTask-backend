@@ -1,11 +1,12 @@
 import { Worker, Queue } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import config from '../config/default';
-import IORedis, { Redis } from 'ioredis';
+import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
 
-const connection: Redis = new IORedis(config.redis.url, { maxRetriesPerRequest: null });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
 
 export const verificationQueue = new Queue('proof-verification', { connection });
 
@@ -24,7 +25,7 @@ const worker = new Worker(
   'proof-verification',
   async (job) => {
     const { proofId } = job.data;
-    logger.info({ proofId, message: 'Processing proof verification' });
+    logger.info('Processing proof verification', { proofId });
 
     await prisma.proof.update({ where: { id: proofId }, data: { status: 'VERIFYING' } });
 
@@ -38,7 +39,7 @@ const worker = new Worker(
     } else if (result.verdict === 'rejected') {
       await prisma.proof.update({ where: { id: proofId }, data: { status: 'REJECTED' } });
     } else {
-      logger.info({ proofId, message: 'Proof inconclusive — needs manual review' });
+      logger.info('Proof inconclusive — needs manual review', { proofId });
     }
 
     await prisma.verification.create({
@@ -54,10 +55,10 @@ const worker = new Worker(
 );
 
 worker.on('completed', (job) =>
-  logger.info({ jobId: job.id, message: 'Verification job completed' }),
+  logger.info('Verification job completed', { jobId: job.id }),
 );
 worker.on('failed', (job, err) =>
-  logger.error({ jobId: job?.id, err, message: 'Verification job failed' }),
+  logger.error('Verification job failed', { jobId: job?.id, err }),
 );
 
 export default worker;

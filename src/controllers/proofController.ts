@@ -68,10 +68,9 @@ export async function submitProof(req: Request, res: Response) {
       });
 
       fs.promises.unlink(file.path).catch((err) => {
-        logger.warn({
+        logger.warn('Failed to clean up uploaded file', {
           err,
           path: file.path,
-          message: 'Failed to clean up uploaded file',
         });
       });
     }
@@ -96,13 +95,12 @@ export async function submitProof(req: Request, res: Response) {
       0.1,
     );
     if (!withinRadius) {
-      logger.warn({
+      logger.warn('GPS mismatch between body and photo', {
         proofId: proof.id,
         bodyLat,
         bodyLng,
         photoLat: gpsFromPhoto.lat,
         photoLng: gpsFromPhoto.lng,
-        message: 'GPS mismatch between body and photo',
       });
     }
   }

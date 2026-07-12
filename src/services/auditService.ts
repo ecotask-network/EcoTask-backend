@@ -17,7 +17,7 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
       VALUES (gen_random_uuid(), ${entry.userId || null}, ${entry.action}, ${entry.resource}, ${entry.resourceId || null}, ${JSON.stringify(entry.details || {})}::jsonb, ${entry.ip || null}, NOW())
     `;
   } catch (err) {
-    logger.error({ err, auditEntry: entry, message: 'Failed to write audit log' });
+    logger.error('Failed to write audit log', { err, auditEntry: entry });
   }
 }
 

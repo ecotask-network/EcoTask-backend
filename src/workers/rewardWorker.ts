@@ -1,11 +1,12 @@
 import { Worker, Queue } from 'bullmq';
 import { submitReward } from '../services/stellarService';
 import config from '../config/default';
-import IORedis, { Redis } from 'ioredis';
+import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
 
-const connection: Redis = new IORedis(config.redis.url, { maxRetriesPerRequest: null });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
 
 export const rewardQueue = new Queue('reward-payout', { connection });
 
@@ -13,7 +14,7 @@ const worker = new Worker(
   'reward-payout',
   async (job) => {
     const { proofId } = job.data;
-    logger.info({ proofId, message: 'Processing reward payout' });
+    logger.info('Processing reward payout', { proofId });
 
     const proof = await prisma.proof.findUnique({
       where: { id: proofId },
@@ -28,7 +29,7 @@ const worker = new Worker(
       assetCode: proof.task.rewardToken || 'ECO',
     });
 
-    logger.info({ proofId, txHash, message: 'Reward paid successfully' });
+    logger.info('Reward paid successfully', { proofId, txHash });
   },
   { connection },
 );

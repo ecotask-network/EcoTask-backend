@@ -40,12 +40,11 @@ export async function submitReward(params: RewardParams): Promise<string> {
   const { userWallet, taskId, amount, assetCode } = params;
 
   if (!config.stellar.oracleSecretKey || config.stellar.oracleSecretKey === 'mock') {
-    logger.info({
+    logger.info('Mock Stellar reward', {
       amount,
       assetCode,
       userWallet,
       taskId,
-      message: 'Mock Stellar reward',
     });
     return `mock-tx-${randomUUID()}`;
   }
