@@ -17,6 +17,7 @@ import { sanitizeInput } from './middleware/sanitize.js';
 import prisma from './utils/prisma.js';
 import logger from './utils/logger.js';
 import { validateEnv } from './config/validate.js';
+import config from './config/default.js';
 
 if (process.env.NODE_ENV !== 'test') {
   validateEnv();
@@ -30,7 +31,12 @@ if (process.env.NODE_ENV !== 'test') {
 const app = express();
 
 app.use(helmet());
-app.use(cors());
+app.use(
+  cors({
+    origin:
+      config.corsOrigin === '*' ? '*' : config.corsOrigin.split(',').map((o) => o.trim()),
+  }),
+);
 app.use(express.json());
 app.use(sanitizeInput);
 
