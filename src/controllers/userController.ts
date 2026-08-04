@@ -1,11 +1,19 @@
-import { Request, Response } from "express";
-import { getUserById, updateUser, getUserImpact } from "../models/user.js";
-import { updateUserSchema } from "../utils/validation.js";
+import { Request, Response } from 'express';
+import { getUserById, updateUser, getUserImpact } from '../models/user.js';
+import { updateUserSchema } from '../utils/validation.js';
 
 export async function getUser(req: Request, res: Response) {
   const user = await getUserById(req.params.id);
   if (!user) {
-    return res.status(404).json({ error: "user not found" });
+    return res.status(404).json({ error: 'user not found' });
+  }
+  return res.json(user);
+}
+
+export async function getMe(req: Request, res: Response) {
+  const user = await getUserById(req.user!.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'user not found' });
   }
   return res.json(user);
 }
@@ -17,7 +25,9 @@ export async function updateUserProfile(req: Request, res: Response) {
 
   const parsed = updateUserSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: "invalid request body", details: parsed.error.flatten() });
+    return res
+      .status(400)
+      .json({ error: 'invalid request body', details: parsed.error.flatten() });
   }
 
   const user = await updateUser(req.params.id, parsed.data);
