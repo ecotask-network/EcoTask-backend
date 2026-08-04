@@ -1,5 +1,6 @@
 import { Worker, Queue } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
+import { notifyProofStatus } from '../services/notificationService';
 import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
@@ -27,17 +28,25 @@ const worker = new Worker(
     const { proofId } = job.data;
     logger.info('Processing proof verification', { proofId });
 
+    const proof = await prisma.proof.findUnique({
+      where: { id: proofId },
+      select: { userId: true },
+    });
+    if (!proof) throw new Error('Proof not found');
+
     await prisma.proof.update({ where: { id: proofId }, data: { status: 'VERIFYING' } });
 
     const result = await autoVerify(proofId);
 
     if (result.verdict === 'approved') {
       await prisma.proof.update({ where: { id: proofId }, data: { status: 'APPROVED' } });
+      await notifyProofStatus(proof.userId, proofId, 'APPROVED');
 
       const { rewardQueue } = await import('./rewardWorker.js');
       await rewardQueue.add('payout', { proofId });
     } else if (result.verdict === 'rejected') {
       await prisma.proof.update({ where: { id: proofId }, data: { status: 'REJECTED' } });
+      await notifyProofStatus(proof.userId, proofId, 'REJECTED');
     } else {
       logger.info('Proof inconclusive — needs manual review', { proofId });
     }
