@@ -30,9 +30,14 @@ const worker = new Worker(
 
     const proof = await prisma.proof.findUnique({
       where: { id: proofId },
-      select: { userId: true },
+      select: { userId: true, status: true },
     });
     if (!proof) throw new Error('Proof not found');
+
+    if (proof.status !== 'PENDING') {
+      logger.info('Skipping proof already processed', { proofId, status: proof.status });
+      return;
+    }
 
     await prisma.proof.update({ where: { id: proofId }, data: { status: 'VERIFYING' } });
 
