@@ -125,11 +125,28 @@ export async function getProof(req: Request, res: Response) {
     return res.status(404).json({ error: 'proof not found' });
   }
 
+  if (proof.userId !== req.user!.userId && !(await isAdmin(req.user!.userId))) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+
   return res.json(proof);
+}
+
+async function isAdmin(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+  return user?.role === 'admin';
 }
 
 export async function getUserProofs(req: Request, res: Response) {
   const userId = req.params.userId;
+
+  if (userId !== req.user!.userId && !(await isAdmin(req.user!.userId))) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 20;
   const skip = (page - 1) * limit;
