@@ -2,7 +2,11 @@ import { Request, Response } from 'express';
 import ExifReader from 'exifreader';
 import fs from 'fs';
 import prisma from '../utils/prisma.js';
-import { submitProofSchema } from '../utils/validation.js';
+import {
+  submitProofSchema,
+  listProofsQuerySchema,
+  MAX_PAGINATION_LIMIT,
+} from '../utils/validation.js';
 import { uploadToIPFS } from '../services/ipfsService.js';
 import { isWithinZone } from '../services/geoService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
@@ -147,8 +151,15 @@ export async function getUserProofs(req: Request, res: Response) {
     return res.status(403).json({ error: 'forbidden' });
   }
 
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = parseInt(req.query.limit as string) || 20;
+  const parsed = listProofsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res
+      .status(400)
+      .json({ error: 'invalid query parameters', details: parsed.error.flatten() });
+  }
+
+  const page = parsed.data.page;
+  const limit = Math.min(parsed.data.limit, MAX_PAGINATION_LIMIT);
   const skip = (page - 1) * limit;
 
   const [proofs, total] = await Promise.all([

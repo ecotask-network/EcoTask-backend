@@ -191,5 +191,26 @@ describe('Proof Routes', () => {
       expect(res.body.data).toHaveLength(1);
       expect(res.body.meta.total).toBe(1);
     });
+
+    it('caps limit at 100', async () => {
+      mockPrisma.proof.findMany.mockResolvedValue([]);
+      mockPrisma.proof.count.mockResolvedValue(0);
+      const res = await request(app)
+        .get('/proofs/user/user-id')
+        .query({ limit: '9999' })
+        .set('Authorization', `Bearer ${userToken()}`);
+      expect(res.status).toBe(200);
+      expect(mockPrisma.proof.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 100 }),
+      );
+    });
+
+    it('returns 400 for invalid pagination params', async () => {
+      const res = await request(app)
+        .get('/proofs/user/user-id')
+        .query({ page: '-1' })
+        .set('Authorization', `Bearer ${userToken()}`);
+      expect(res.status).toBe(400);
+    });
   });
 });

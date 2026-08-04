@@ -59,3 +59,10 @@ export const submitProofSchema = z.object({
   lng: z.coerce.number().min(-180).max(180).optional(),
   notes: z.string().max(1000).optional(),
 });
+
+export const listProofsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).default(20),
+});
+
+export const MAX_PAGINATION_LIMIT = 100;
