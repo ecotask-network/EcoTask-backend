@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const loginSchema = z.object({
   wallet: z.string().length(56),
@@ -12,6 +12,11 @@ export const updateUserSchema = z.object({
   avatarUrl: z.string().url().optional(),
 });
 
+export const radiusMetersField = z
+  .number()
+  .positive()
+  .max(100000, 'radiusMeters must not exceed 100km');
+
 export const createTaskSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().max(2000).optional(),
@@ -19,6 +24,7 @@ export const createTaskSchema = z.object({
   rewardAmount: z.number().positive(),
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
+  radiusMeters: radiusMetersField.optional(),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -29,7 +35,8 @@ export const updateTaskSchema = z.object({
   rewardAmount: z.number().positive().optional(),
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
-  status: z.enum(["ACTIVE", "COMPLETED", "EXPIRED"]).optional(),
+  radiusMeters: radiusMetersField.optional(),
+  status: z.enum(['ACTIVE', 'COMPLETED', 'EXPIRED']).optional(),
   expiresAt: z.string().datetime().optional(),
 });
 

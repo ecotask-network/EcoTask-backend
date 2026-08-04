@@ -1,4 +1,4 @@
-import prisma from "../utils/prisma.js";
+import prisma from '../utils/prisma.js';
 
 export interface TaskFilters {
   type?: string;
@@ -45,7 +45,7 @@ export async function listTasks(filters: TaskFilters = {}) {
 
   const tasks = await prisma.task.findMany({
     where,
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: 'desc' },
     take: limit + 1,
   });
 
@@ -67,6 +67,7 @@ export async function createTask(data: {
   rewardAmount: number;
   lat: number;
   lng: number;
+  radiusMeters?: number;
   expiresAt?: Date;
 }) {
   return prisma.task.create({ data });
@@ -81,6 +82,7 @@ export async function updateTask(
     rewardAmount?: number;
     lat?: number;
     lng?: number;
+    radiusMeters?: number;
     status?: string;
     expiresAt?: Date;
   },

@@ -183,6 +183,40 @@ describe('Task Routes', () => {
       expect(res.status).toBe(201);
       expect(res.body.id).toBe('new-task');
     });
+
+    it('forwards radiusMeters when creating a task', async () => {
+      mockTask.createTask.mockResolvedValue({ id: 'new-task' });
+      const res = await request(app)
+        .post('/tasks')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          title: 'New Task',
+          type: 'cleanup',
+          rewardAmount: 50,
+          lat: 40.71,
+          lng: -74.0,
+          radiusMeters: 500,
+        });
+      expect(res.status).toBe(201);
+      expect(mockTask.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({ radiusMeters: 500 }),
+      );
+    });
+
+    it('rejects an excessive radiusMeters value', async () => {
+      const res = await request(app)
+        .post('/tasks')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          title: 'New Task',
+          type: 'cleanup',
+          rewardAmount: 50,
+          lat: 40.71,
+          lng: -74.0,
+          radiusMeters: 999999999,
+        });
+      expect(res.status).toBe(400);
+    });
   });
 
   describe('PUT /tasks/:id', () => {
