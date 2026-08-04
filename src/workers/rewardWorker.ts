@@ -22,11 +22,27 @@ const worker = new Worker(
     });
     if (!proof) throw new Error('Proof not found');
 
+    if (proof.status !== 'APPROVED') {
+      throw new Error(`Cannot pay reward for proof in state '${proof.status}'`);
+    }
+    if (proof.rewardedAt) {
+      logger.info('Skipping payout already processed', {
+        proofId,
+        rewardedAt: proof.rewardedAt,
+      });
+      return;
+    }
+
     const txHash = await submitReward({
       userWallet: proof.user.wallet,
       taskId: proof.taskId,
       amount: proof.task.rewardAmount,
       assetCode: proof.task.rewardToken || 'ECO',
+    });
+
+    await prisma.proof.update({
+      where: { id: proofId },
+      data: { rewardedAt: new Date() },
     });
 
     logger.info('Reward paid successfully', { proofId, txHash });
