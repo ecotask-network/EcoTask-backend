@@ -92,7 +92,7 @@ export async function submitProof(req: Request, res: Response) {
       gpsFromPhoto.lng,
       bodyLat,
       bodyLng,
-      0.1,
+      task.radiusMeters / 1000,
     );
     if (!withinRadius) {
       logger.warn('GPS mismatch between body and photo', {
