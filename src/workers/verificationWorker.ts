@@ -75,4 +75,11 @@ worker.on('failed', (job, err) =>
   logger.error('Verification job failed', { jobId: job?.id, err }),
 );
 
+export async function shutdownVerificationWorker(): Promise<void> {
+  await worker.close();
+  await verificationQueue.close();
+  await connection.quit();
+  logger.info('Verification worker shut down');
+}
+
 export default worker;

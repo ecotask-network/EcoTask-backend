@@ -50,4 +50,11 @@ const worker = new Worker(
   { connection },
 );
 
+export async function shutdownRewardWorker(): Promise<void> {
+  await worker.close();
+  await rewardQueue.close();
+  await connection.quit();
+  logger.info('Reward worker shut down');
+}
+
 export default worker;

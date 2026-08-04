@@ -73,6 +73,15 @@ if (process.env.NODE_ENV !== 'test') {
     logger.info(`${signal} received, starting graceful shutdown`);
     server.close(async () => {
       logger.info('HTTP server closed');
+
+      const [{ shutdownVerificationWorker }, { shutdownRewardWorker }] =
+        await Promise.all([
+          import('./workers/verificationWorker.js'),
+          import('./workers/rewardWorker.js'),
+        ]);
+      await Promise.all([shutdownVerificationWorker(), shutdownRewardWorker()]);
+      logger.info('Background workers shut down');
+
       await prisma.$disconnect();
       logger.info('Prisma client disconnected');
       process.exit(0);
