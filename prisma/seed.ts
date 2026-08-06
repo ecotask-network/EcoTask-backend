@@ -16,6 +16,7 @@ const SAMPLE_TASKS = [
     lat: 40.7128,
     lng: -74.006,
     status: 'ACTIVE',
+    maxCompletions: 10,
     expiresAt: daysFromNow(30),
   },
   {
@@ -27,6 +28,7 @@ const SAMPLE_TASKS = [
     lat: 40.7282,
     lng: -73.7949,
     status: 'ACTIVE',
+    maxCompletions: 25,
     expiresAt: daysFromNow(21),
   },
   {
@@ -38,6 +40,7 @@ const SAMPLE_TASKS = [
     lat: 40.758,
     lng: -73.9855,
     status: 'ACTIVE',
+    maxCompletions: 15,
     expiresAt: daysFromNow(14),
   },
   {
@@ -49,6 +52,7 @@ const SAMPLE_TASKS = [
     lat: 40.5771,
     lng: -73.9351,
     status: 'ACTIVE',
+    maxCompletions: 20,
     expiresAt: daysFromNow(25),
   },
   {
@@ -60,6 +64,7 @@ const SAMPLE_TASKS = [
     lat: 40.7484,
     lng: -73.9857,
     status: 'ACTIVE',
+    maxCompletions: 12,
     expiresAt: daysFromNow(28),
   },
   {
@@ -71,6 +76,7 @@ const SAMPLE_TASKS = [
     lat: 40.7127,
     lng: -74.0059,
     status: 'ACTIVE',
+    maxCompletions: 8,
     expiresAt: daysFromNow(10),
   },
   {
@@ -82,6 +88,7 @@ const SAMPLE_TASKS = [
     lat: 41.2033,
     lng: -73.7263,
     status: 'ACTIVE',
+    maxCompletions: 6,
     expiresAt: daysFromNow(35),
   },
   {
@@ -93,6 +100,7 @@ const SAMPLE_TASKS = [
     lat: 40.7061,
     lng: -74.0087,
     status: 'ACTIVE',
+    maxCompletions: 30,
     expiresAt: daysFromNow(7),
   },
   {
@@ -103,6 +111,7 @@ const SAMPLE_TASKS = [
     lat: 40.7243,
     lng: -74.0018,
     status: 'ACTIVE',
+    maxCompletions: 10,
     expiresAt: daysFromNow(18),
   },
   {
@@ -114,6 +123,7 @@ const SAMPLE_TASKS = [
     lat: 40.7282,
     lng: -74.0102,
     status: 'ACTIVE',
+    maxCompletions: 5,
     expiresAt: daysFromNow(32),
   },
   {
@@ -125,6 +135,7 @@ const SAMPLE_TASKS = [
     lat: 40.7456,
     lng: -73.9888,
     status: 'ACTIVE',
+    maxCompletions: 40,
     expiresAt: daysFromNow(9),
   },
   {
@@ -136,6 +147,7 @@ const SAMPLE_TASKS = [
     lat: 40.7384,
     lng: -73.9973,
     status: 'ACTIVE',
+    maxCompletions: 10,
     expiresAt: daysFromNow(22),
   },
   {
@@ -147,6 +159,7 @@ const SAMPLE_TASKS = [
     lat: 40.7308,
     lng: -73.9973,
     status: 'ACTIVE',
+    maxCompletions: 5,
     expiresAt: daysFromNow(29),
   },
   {
@@ -158,6 +171,7 @@ const SAMPLE_TASKS = [
     lat: 40.7573,
     lng: -73.9857,
     status: 'ACTIVE',
+    maxCompletions: 5,
     expiresAt: daysFromNow(12),
   },
   {
@@ -168,6 +182,7 @@ const SAMPLE_TASKS = [
     lat: 40.7527,
     lng: -73.9772,
     status: 'ACTIVE',
+    maxCompletions: 20,
     expiresAt: daysFromNow(8),
   },
   {
@@ -179,6 +194,7 @@ const SAMPLE_TASKS = [
     lat: 40.6142,
     lng: -73.8441,
     status: 'ACTIVE',
+    maxCompletions: 8,
     expiresAt: daysFromNow(33),
   },
   {
@@ -190,6 +206,7 @@ const SAMPLE_TASKS = [
     lat: 40.7431,
     lng: -73.989,
     status: 'ACTIVE',
+    maxCompletions: 6,
     expiresAt: daysFromNow(15),
   },
   {
@@ -201,6 +218,7 @@ const SAMPLE_TASKS = [
     lat: 40.7888,
     lng: -73.9746,
     status: 'ACTIVE',
+    maxCompletions: 25,
     expiresAt: daysFromNow(19),
   },
   {
