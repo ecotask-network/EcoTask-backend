@@ -170,10 +170,20 @@ npm run db:seed
 npm run dev
 ```
 
-### Or with Docker
+### Or with Docker (infrastructure only)
+
+`docker-compose.yml` runs just the supporting services — PostgreSQL and Redis.
+The API itself runs on your host:
 
 ```bash
-docker-compose up --build
+# 1. Start Postgres and Redis in the background
+docker-compose up -d
+
+# 2. Install, configure, migrate and run the API
+npm install
+cp .env.example .env     # fill in DATABASE_URL, JWT_SECRET, Stellar keys, etc.
+npx prisma migrate dev
+npm run dev
 # API available at http://localhost:3000
 ```
 
@@ -211,7 +221,9 @@ JWT_EXPIRES_IN=7d
 
 ## 📡 API Overview
 
-Full docs available at `/api/docs` (Swagger UI) when running locally.
+The endpoint reference below is the authoritative API documentation for the
+current version. The API is versionless for now; once stable, breaking changes
+will be gated behind `/v1` and `/v2` prefixes.
 
 ### Tasks
 
@@ -339,10 +351,64 @@ npm run test:integration
 
 ---
 
+## 🗺️ Roadmap
+
+Where the project is today and where it's headed. Priorities may shift based on
+contributor and community feedback — see the [discussions](https://github.com/ecotask-network/EcoTask-backend/discussions)
+and [issues](https://github.com/ecotask-network/EcoTask-backend/issues) for the
+lively plan.
+
+### Shipped (v0.1)
+
+- Stellar wallet-based auth (challenge → signature → JWT)
+- Task CRUD, geo-bounded listing, claims, capacity limits (`maxCompletions`),
+  and automatic expiry
+- Proof intake: photo upload, EXIF GPS extraction, IPFS pinning
+- Verification pipeline: auto-checks (GPS radius, photos, task expiry) with
+  confidence scoring, plus admin review for inconclusive proofs
+- Reward payouts via the Stellar SDK (mock mode for local dev)
+- DB-backed notification inbox with read/unread tracking
+- Platform analytics, daily trends, and a rewards-enriched leaderboard
+- Audit logging of mutating admin/API actions
+
+### In progress
+
+- Notification delivery to end users — the inbox is persisted; push/email/webhook
+  dispatch is the next step
+- Integrating the `reward-engine` Soroban contract (the oracle secret and
+  contract ID are configured, but payouts currently use a direct payment op)
+- Real photo analysis to replace the placeholder `photo_quality` check
+
+### Planned
+
+- Community validator program: reviewer reputation, quorum voting, and fair
+  review assignment
+- Per-user rate limits and abuse controls beyond the current global limiters
+- API versioning, pagination hypermedia, and generated OpenAPI docs
+- Impact reporting standardization (trees, plastic, CO₂) with exportable
+  verifiable claims
+
+---
+
 ## 🤝 Contributing
 
 Backend developers, DevOps engineers, and database architects especially welcome!
 See [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
+
+---
+
+## 💬 Contact & Community
+
+Questions, ideas, or feedback? Reach the team and fellow contributors here:
+
+| Channel                                                                              | What it's for                                  |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| [GitHub Discussions](https://github.com/ecotask-network/EcoTask-backend/discussions) | General questions, feature ideas, project chat |
+| [GitHub Issues](https://github.com/ecotask-network/EcoTask-backend/issues)           | Bug reports and trackable feature requests     |
+| [EcoTask docs hub](https://github.com/ecotask-network/EcoTask-docs)                  | Project-wide documentation and announcements   |
+
+Please follow our [Code of Conduct](./CODE_OF_CONDUCT.md) in all interactions.
+Security issues should be reported privately — see [SECURITY.md](./SECURITY.md).
 
 ---
 
