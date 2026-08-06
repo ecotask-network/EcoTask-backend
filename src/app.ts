@@ -27,6 +27,9 @@ if (process.env.NODE_ENV !== 'test') {
 if (process.env.NODE_ENV !== 'test') {
   import('./workers/verificationWorker.js');
   import('./workers/rewardWorker.js');
+  import('./workers/expiryWorker.js').then(({ startExpirySweeper }) => {
+    startExpirySweeper();
+  });
 }
 
 const app = express();
@@ -81,6 +84,10 @@ if (process.env.NODE_ENV !== 'test') {
         ]);
       await Promise.all([shutdownVerificationWorker(), shutdownRewardWorker()]);
       logger.info('Background workers shut down');
+
+      const { stopExpirySweeper } = await import('./workers/expiryWorker.js');
+      stopExpirySweeper();
+      logger.info('Expiry sweeper stopped');
 
       await prisma.$disconnect();
       logger.info('Prisma client disconnected');

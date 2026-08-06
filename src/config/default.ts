@@ -7,6 +7,7 @@ export default {
       process.env.DATABASE_URL || 'postgresql://ecotask:ecotask@localhost:5432/ecotask',
   },
   redis: { url: process.env.REDIS_URL || 'redis://localhost:6379' },
+  expirySweepIntervalMs: parseInt(process.env.EXPIRY_SWEEP_INTERVAL_MS || '900000', 10),
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     oracleSecretKey: process.env.STELLAR_ORACLE_SECRET_KEY || '',
