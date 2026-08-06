@@ -11,6 +11,7 @@ jest.mock('../../src/utils/prisma', () => ({
     task: { count: jest.fn() },
     user: { count: jest.fn() },
     proof: { count: jest.fn(), findMany: jest.fn() },
+    $queryRaw: jest.fn(),
   },
 }));
 
@@ -20,6 +21,7 @@ const mockPrisma = prisma as unknown as {
   task: { count: jest.Mock };
   user: { count: jest.Mock };
   proof: { count: jest.Mock; findMany: jest.Mock };
+  $queryRaw: jest.Mock;
 };
 
 describe('Analytics Routes', () => {
@@ -48,6 +50,30 @@ describe('Analytics Routes', () => {
         approvedProofs: 2,
         totalRewardPaid: 80,
       });
+    });
+  });
+
+  describe('GET /analytics/trends', () => {
+    it('returns a daily series of approved proofs and rewards', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { day: new Date('2026-08-01T00:00:00Z'), count: 2, reward: 100 },
+        { day: new Date('2026-08-02T00:00:00Z'), count: 1, reward: 50 },
+      ]);
+
+      const res = await request(app).get('/analytics/trends').query({ days: '7' });
+      expect(res.status).toBe(200);
+      expect(res.body.days).toBe(7);
+      expect(res.body.points).toEqual([
+        { day: '2026-08-01', approvedProofs: 2, totalReward: 100 },
+        { day: '2026-08-02', approvedProofs: 1, totalReward: 50 },
+      ]);
+    });
+
+    it('caps the requested window at 365 days', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([]);
+      const res = await request(app).get('/analytics/trends').query({ days: '9999' });
+      expect(res.status).toBe(200);
+      expect(res.body.days).toBe(365);
     });
   });
 });

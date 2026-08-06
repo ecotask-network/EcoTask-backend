@@ -6,55 +6,92 @@ import prisma from '../utils/prisma';
 import logger from '../utils/logger';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
+let connection: any = null;
+let queue: Queue | null = null;
+let worker: Worker | null = null;
 
-export const rewardQueue = new Queue('reward-payout', { connection });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getConnection(): any {
+  if (!connection) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
+  }
+  return connection;
+}
 
-const worker = new Worker(
-  'reward-payout',
-  async (job) => {
-    const { proofId } = job.data;
-    logger.info('Processing reward payout', { proofId });
+function getQueue(): Queue {
+  if (!queue) {
+    queue = new Queue('reward-payout', { connection: getConnection() });
+  }
+  return queue;
+}
 
-    const proof = await prisma.proof.findUnique({
-      where: { id: proofId },
-      include: { user: true, task: true },
-    });
-    if (!proof) throw new Error('Proof not found');
+export async function enqueueRewardPayout(proofId: string): Promise<void> {
+  await getQueue().add('payout', { proofId });
+}
 
-    if (proof.status !== 'APPROVED') {
-      throw new Error(`Cannot pay reward for proof in state '${proof.status}'`);
-    }
-    if (proof.rewardedAt) {
-      logger.info('Skipping payout already processed', {
-        proofId,
-        rewardedAt: proof.rewardedAt,
+export function startRewardWorker(): void {
+  if (worker) return;
+  worker = new Worker(
+    'reward-payout',
+    async (job) => {
+      const { proofId } = job.data;
+      logger.info('Processing reward payout', { proofId });
+
+      const proof = await prisma.proof.findUnique({
+        where: { id: proofId },
+        include: { user: true, task: true },
       });
-      return;
-    }
+      if (!proof) throw new Error('Proof not found');
 
-    const txHash = await submitReward({
-      userWallet: proof.user.wallet,
-      taskId: proof.taskId,
-      amount: proof.task.rewardAmount,
-      assetCode: proof.task.rewardToken || 'ECO',
-    });
+      if (proof.status !== 'APPROVED') {
+        throw new Error(`Cannot pay reward for proof in state '${proof.status}'`);
+      }
+      if (proof.rewardedAt) {
+        logger.info('Skipping payout already processed', {
+          proofId,
+          rewardedAt: proof.rewardedAt,
+        });
+        return;
+      }
 
-    await prisma.proof.update({
-      where: { id: proofId },
-      data: { rewardedAt: new Date() },
-    });
+      const txHash = await submitReward({
+        userWallet: proof.user.wallet,
+        taskId: proof.taskId,
+        amount: proof.task.rewardAmount,
+        assetCode: proof.task.rewardToken || 'ECO',
+      });
 
-    logger.info('Reward paid successfully', { proofId, txHash });
-  },
-  { connection },
-);
+      await prisma.proof.update({
+        where: { id: proofId },
+        data: { rewardedAt: new Date() },
+      });
+
+      logger.info('Reward paid successfully', { proofId, txHash });
+    },
+    { connection: getConnection() },
+  );
+
+  worker.on('completed', (job) => logger.info('Reward job completed', { jobId: job.id }));
+  worker.on('failed', (job, err) =>
+    logger.error('Reward job failed', { jobId: job?.id, err }),
+  );
+}
 
 export async function shutdownRewardWorker(): Promise<void> {
-  await worker.close();
-  await rewardQueue.close();
-  await connection.quit();
+  if (worker) {
+    await worker.close();
+    worker = null;
+  }
+  if (queue) {
+    await queue.close();
+    queue = null;
+  }
+  if (connection) {
+    await connection.quit();
+    connection = null;
+  }
   logger.info('Reward worker shut down');
 }
 
-export default worker;
+export default startRewardWorker;

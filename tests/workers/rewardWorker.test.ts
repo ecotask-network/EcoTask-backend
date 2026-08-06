@@ -40,7 +40,7 @@ jest.mock('../../src/utils/logger', () => ({
   default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
 }));
 
-import '../../src/workers/rewardWorker';
+import { startRewardWorker } from '../../src/workers/rewardWorker';
 import prisma from '../../src/utils/prisma';
 import { submitReward } from '../../src/services/stellarService';
 
@@ -49,10 +49,12 @@ const mockPrisma = prisma as unknown as {
 };
 const mockSubmitReward = submitReward as jest.Mock;
 
-const processor = (Worker as unknown as jest.Mock).mock.calls[0][1] as (job: {
-  id: string;
-  data: { proofId: string };
-}) => Promise<void>;
+let processor: (job: { id: string; data: { proofId: string } }) => Promise<void>;
+
+beforeAll(() => {
+  startRewardWorker();
+  processor = (Worker as unknown as jest.Mock).mock.calls[0][1];
+});
 
 function approvedProof(overrides: Record<string, unknown> = {}) {
   return {

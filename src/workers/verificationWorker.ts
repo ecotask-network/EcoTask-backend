@@ -1,6 +1,8 @@
 import { Worker, Queue } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
+import { completeTaskIfFull } from '../models/task';
+import { enqueueRewardPayout } from './rewardWorker';
 import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
@@ -47,14 +49,12 @@ const worker = new Worker(
       await prisma.proof.update({ where: { id: proofId }, data: { status: 'APPROVED' } });
       await notifyProofStatus(proof.userId, proofId, 'APPROVED');
 
-      const { completeTaskIfFull } = await import('../models/task.js');
       const completed = await completeTaskIfFull(proof.taskId);
       if (completed) {
         logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
       }
 
-      const { rewardQueue } = await import('./rewardWorker.js');
-      await rewardQueue.add('payout', { proofId });
+      await enqueueRewardPayout(proofId);
     } else if (result.verdict === 'rejected') {
       await prisma.proof.update({ where: { id: proofId }, data: { status: 'REJECTED' } });
       await notifyProofStatus(proof.userId, proofId, 'REJECTED');

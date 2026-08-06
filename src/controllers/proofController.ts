@@ -13,6 +13,8 @@ import { uploadToIPFS } from '../services/ipfsService.js';
 import { isWithinZone } from '../services/geoService.js';
 import { notifyProofStatus } from '../services/notificationService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
+import { enqueueRewardPayout } from '../workers/rewardWorker.js';
+import { completeTaskIfFull } from '../models/task.js';
 import logger from '../utils/logger.js';
 
 async function extractGps(
@@ -229,14 +231,12 @@ export async function reviewProof(req: Request, res: Response) {
   await notifyProofStatus(proof.userId, proof.id, status);
 
   if (status === 'APPROVED') {
-    const { completeTaskIfFull } = await import('../models/task.js');
     const completed = await completeTaskIfFull(proof.taskId);
     if (completed) {
       logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
     }
 
-    const { rewardQueue } = await import('../workers/rewardWorker.js');
-    await rewardQueue.add('payout', { proofId: proof.id });
+    await enqueueRewardPayout(proof.id);
   }
 
   const updated = await prisma.proof.findUnique({

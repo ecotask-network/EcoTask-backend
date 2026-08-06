@@ -27,7 +27,9 @@ if (process.env.NODE_ENV !== 'test') {
 
 if (process.env.NODE_ENV !== 'test') {
   import('./workers/verificationWorker.js');
-  import('./workers/rewardWorker.js');
+  import('./workers/rewardWorker.js').then(({ startRewardWorker }) => {
+    startRewardWorker();
+  });
   import('./workers/expiryWorker.js').then(({ startExpirySweeper }) => {
     startExpirySweeper();
   });

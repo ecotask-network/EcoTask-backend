@@ -40,6 +40,14 @@ jest.mock('../../src/utils/prisma', () => ({
   },
 }));
 
+jest.mock('../../src/models/task', () => ({
+  completeTaskIfFull: jest.fn().mockResolvedValue(false),
+}));
+
+jest.mock('../../src/workers/rewardWorker', () => ({
+  enqueueRewardPayout: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('../../src/utils/logger', () => ({
   __esModule: true,
   default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
@@ -91,5 +99,37 @@ describe('Verification Worker', () => {
       where: { id: 'proof-1' },
       data: { status: 'VERIFYING' },
     });
+  });
+
+  it('approves valid proofs, checks capacity and enqueues payout', async () => {
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      taskId: 'task-1',
+      status: 'PENDING',
+    });
+    mockPrisma.proof.update.mockResolvedValue({});
+    const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      autoVerify: jest.Mock;
+    };
+    autoVerify.mockResolvedValue({ verdict: 'approved', confidence: 0.9, notes: 'ok' });
+
+    const { completeTaskIfFull } = jest.requireMock('../../src/models/task') as {
+      completeTaskIfFull: jest.Mock;
+    };
+    completeTaskIfFull.mockResolvedValue(true);
+    const { enqueueRewardPayout } = jest.requireMock(
+      '../../src/workers/rewardWorker',
+    ) as {
+      enqueueRewardPayout: jest.Mock;
+    };
+
+    await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
+
+    expect(mockPrisma.proof.update).toHaveBeenCalledWith({
+      where: { id: 'proof-1' },
+      data: { status: 'APPROVED' },
+    });
+    expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
+    expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1');
   });
 });
