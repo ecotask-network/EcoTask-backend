@@ -30,7 +30,7 @@ const worker = new Worker(
 
     const proof = await prisma.proof.findUnique({
       where: { id: proofId },
-      select: { userId: true, status: true },
+      select: { userId: true, taskId: true, status: true },
     });
     if (!proof) throw new Error('Proof not found');
 
@@ -46,6 +46,12 @@ const worker = new Worker(
     if (result.verdict === 'approved') {
       await prisma.proof.update({ where: { id: proofId }, data: { status: 'APPROVED' } });
       await notifyProofStatus(proof.userId, proofId, 'APPROVED');
+
+      const { completeTaskIfFull } = await import('../models/task.js');
+      const completed = await completeTaskIfFull(proof.taskId);
+      if (completed) {
+        logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
+      }
 
       const { rewardQueue } = await import('./rewardWorker.js');
       await rewardQueue.add('payout', { proofId });

@@ -17,6 +17,12 @@ export const radiusMetersField = z
   .positive()
   .max(100000, 'radiusMeters must not exceed 100km');
 
+export const maxCompletionsField = z
+  .number()
+  .int()
+  .positive()
+  .max(100000, 'maxCompletions must not exceed 100000');
+
 export const createTaskSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().max(2000).optional(),
@@ -25,6 +31,7 @@ export const createTaskSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   radiusMeters: radiusMetersField.optional(),
+  maxCompletions: maxCompletionsField.optional(),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -36,6 +43,7 @@ export const updateTaskSchema = z.object({
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
   radiusMeters: radiusMetersField.optional(),
+  maxCompletions: maxCompletionsField.optional(),
   status: z.enum(['ACTIVE', 'COMPLETED', 'EXPIRED']).optional(),
   expiresAt: z.string().datetime().optional(),
 });

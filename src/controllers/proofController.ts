@@ -43,6 +43,15 @@ export async function submitProof(req: Request, res: Response) {
     return res.status(400).json({ error: 'task is not active' });
   }
 
+  if (task.maxCompletions != null) {
+    const completed = await prisma.proof.count({
+      where: { taskId, status: 'APPROVED' },
+    });
+    if (completed >= task.maxCompletions) {
+      return res.status(409).json({ error: 'task has reached maximum completions' });
+    }
+  }
+
   const proof = await prisma.proof.create({
     data: {
       userId: req.user!.userId,

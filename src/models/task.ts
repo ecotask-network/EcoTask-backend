@@ -68,6 +68,7 @@ export async function createTask(data: {
   lat: number;
   lng: number;
   radiusMeters?: number;
+  maxCompletions?: number;
   expiresAt?: Date;
 }) {
   return prisma.task.create({ data });
@@ -83,6 +84,7 @@ export async function updateTask(
     lat?: number;
     lng?: number;
     radiusMeters?: number;
+    maxCompletions?: number;
     status?: string;
     expiresAt?: Date;
   },
@@ -92,4 +94,25 @@ export async function updateTask(
 
 export async function deleteTask(id: string) {
   return prisma.task.delete({ where: { id } });
+}
+
+export async function getTaskCompletionCount(taskId: string): Promise<number> {
+  return prisma.proof.count({ where: { taskId, status: 'APPROVED' } });
+}
+
+export async function completeTaskIfFull(taskId: string): Promise<boolean> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { id: true, status: true, maxCompletions: true },
+  });
+  if (!task || task.maxCompletions == null || task.status !== 'ACTIVE') return false;
+
+  const completed = await getTaskCompletionCount(taskId);
+  if (completed < task.maxCompletions) return false;
+
+  await prisma.task.update({
+    where: { id: taskId },
+    data: { status: 'COMPLETED' },
+  });
+  return true;
 }
