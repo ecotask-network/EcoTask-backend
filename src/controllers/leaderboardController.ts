@@ -17,29 +17,42 @@ export async function getLeaderboard(req: Request, res: Response) {
     ...(dateFilter ? { createdAt: { gte: dateFilter } } : {}),
   };
 
-  const results = await prisma.proof.groupBy({
-    by: ['userId'],
+  const proofs = await prisma.proof.findMany({
     where,
-    _count: true,
-    orderBy: { _count: { id: 'desc' } },
-    take: limit,
+    select: { userId: true, task: { select: { rewardAmount: true } } },
   });
 
-  const userIds = results.map((r) => r.userId);
-  const users = await prisma.user.findMany({
-    where: { id: { in: userIds } },
-    select: { id: true, wallet: true, name: true, avatarUrl: true },
-  });
+  const aggregates = new Map<string, { count: number; reward: number }>();
+  for (const proof of proofs) {
+    const agg = aggregates.get(proof.userId) ?? { count: 0, reward: 0 };
+    agg.count += 1;
+    agg.reward += proof.task.rewardAmount;
+    aggregates.set(proof.userId, agg);
+  }
+
+  const ranked = [...aggregates.entries()].sort(
+    (a, b) => b[1].count - a[1].count || b[1].reward - a[1].reward,
+  );
+
+  const userIds = ranked.slice(0, limit).map(([userId]) => userId);
+  const users =
+    userIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, wallet: true, name: true, avatarUrl: true },
+        })
+      : [];
 
   const userMap = new Map(users.map((u) => [u.id, u]));
 
-  const leaderboard = results.map((entry, index) => ({
+  const leaderboard = ranked.slice(0, limit).map(([userId, agg], index) => ({
     rank: index + 1,
-    userId: entry.userId,
-    wallet: userMap.get(entry.userId)?.wallet || '',
-    name: userMap.get(entry.userId)?.name || null,
-    avatarUrl: userMap.get(entry.userId)?.avatarUrl || null,
-    approvedProofs: entry._count ?? 0,
+    userId,
+    wallet: userMap.get(userId)?.wallet || '',
+    name: userMap.get(userId)?.name || null,
+    avatarUrl: userMap.get(userId)?.avatarUrl || null,
+    approvedProofs: agg.count,
+    totalReward: agg.reward,
   }));
 
   res.json({ leaderboard, period });
