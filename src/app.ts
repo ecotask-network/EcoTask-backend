@@ -12,6 +12,7 @@ import healthRoutes from './routes/health.js';
 import leaderboardRoutes from './routes/leaderboard.js';
 import analyticsRoutes from './routes/analytics.js';
 import auditRoutes from './routes/audit.js';
+import notificationRoutes from './routes/notifications.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { apiLimiter, authLimiter, proofLimiter } from './middleware/rateLimit.js';
 import { sanitizeInput } from './middleware/sanitize.js';
@@ -59,6 +60,7 @@ app.use('/proofs', proofLimiter, proofRoutes);
 app.use('/leaderboard', leaderboardRoutes);
 app.use('/analytics', analyticsRoutes);
 app.use('/audit', auditRoutes);
+app.use('/notifications', notificationRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

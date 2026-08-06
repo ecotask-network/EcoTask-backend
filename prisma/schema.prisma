@@ -26,6 +26,7 @@ model User {
 
   proofs Proof[]
   claims TaskClaim[]
+  notifications Notification[]
 }
 
 model Task {
@@ -119,4 +120,19 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@map("AuditLog")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String
+  title     String
+  body      String?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("notifications")
 }
