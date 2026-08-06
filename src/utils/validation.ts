@@ -73,4 +73,15 @@ export const listProofsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).default(20),
 });
 
+export const listPendingProofsQuerySchema = z.object({
+  status: z.enum(['PENDING', 'VERIFYING']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).default(20),
+});
+
+export const reviewProofSchema = z.object({
+  verdict: z.enum(['approved', 'rejected']),
+  notes: z.string().max(1000).optional(),
+});
+
 export const MAX_PAGINATION_LIMIT = 100;

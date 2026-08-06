@@ -5,10 +5,13 @@ import prisma from '../utils/prisma.js';
 import {
   submitProofSchema,
   listProofsQuerySchema,
+  listPendingProofsQuerySchema,
+  reviewProofSchema,
   MAX_PAGINATION_LIMIT,
 } from '../utils/validation.js';
 import { uploadToIPFS } from '../services/ipfsService.js';
 import { isWithinZone } from '../services/geoService.js';
+import { notifyProofStatus } from '../services/notificationService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
 import logger from '../utils/logger.js';
 
@@ -151,6 +154,96 @@ async function isAdmin(userId: string): Promise<boolean> {
     select: { role: true },
   });
   return user?.role === 'admin';
+}
+
+export async function listPendingProofs(req: Request, res: Response) {
+  const parsed = listPendingProofsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res
+      .status(400)
+      .json({ error: 'invalid query parameters', details: parsed.error.flatten() });
+  }
+
+  const page = parsed.data.page;
+  const limit = Math.min(parsed.data.limit, MAX_PAGINATION_LIMIT);
+  const skip = (page - 1) * limit;
+
+  const where = parsed.data.status
+    ? { status: parsed.data.status }
+    : { status: { in: ['PENDING' as const, 'VERIFYING' as const] } };
+
+  const [proofs, total] = await Promise.all([
+    prisma.proof.findMany({
+      where,
+      include: {
+        photos: true,
+        user: { select: { id: true, wallet: true, name: true } },
+        task: { select: { id: true, title: true, type: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      skip,
+      take: limit,
+    }),
+    prisma.proof.count({ where }),
+  ]);
+
+  return res.json({
+    data: proofs,
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  });
+}
+
+export async function reviewProof(req: Request, res: Response) {
+  const parsed = reviewProofSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res
+      .status(400)
+      .json({ error: 'invalid request body', details: parsed.error.flatten() });
+  }
+
+  const proof = await prisma.proof.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, userId: true, taskId: true, status: true },
+  });
+  if (!proof) {
+    return res.status(404).json({ error: 'proof not found' });
+  }
+  if (proof.status === 'APPROVED' || proof.status === 'REJECTED') {
+    return res.status(409).json({ error: 'proof already has a final verdict' });
+  }
+
+  const status = parsed.data.verdict === 'approved' ? 'APPROVED' : 'REJECTED';
+
+  await prisma.$transaction([
+    prisma.proof.update({ where: { id: proof.id }, data: { status } }),
+    prisma.verification.create({
+      data: {
+        proofId: proof.id,
+        verifierId: req.user!.userId,
+        verdict: parsed.data.verdict,
+        notes: parsed.data.notes,
+      },
+    }),
+  ]);
+
+  await notifyProofStatus(proof.userId, proof.id, status);
+
+  if (status === 'APPROVED') {
+    const { completeTaskIfFull } = await import('../models/task.js');
+    const completed = await completeTaskIfFull(proof.taskId);
+    if (completed) {
+      logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
+    }
+
+    const { rewardQueue } = await import('../workers/rewardWorker.js');
+    await rewardQueue.add('payout', { proofId: proof.id });
+  }
+
+  const updated = await prisma.proof.findUnique({
+    where: { id: proof.id },
+    include: { photos: true, verifications: true },
+  });
+  return res.json(updated);
 }
 
 export async function getUserProofs(req: Request, res: Response) {
