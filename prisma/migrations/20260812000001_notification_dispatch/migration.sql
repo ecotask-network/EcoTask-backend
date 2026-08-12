@@ -1,6 +1,6 @@
 -- Notification outbound delivery channels
-ALTER TABLE "users" ADD COLUMN "email" TEXT;
-ALTER TABLE "users" ADD COLUMN "webhook_url" TEXT;
+ALTER TABLE "User" ADD COLUMN "email" TEXT;
+ALTER TABLE "User" ADD COLUMN "webhook_url" TEXT;
 
 ALTER TABLE "notifications" ADD COLUMN "channel" TEXT;
 ALTER TABLE "notifications" ADD COLUMN "delivered_at" TIMESTAMP(3);
