@@ -89,4 +89,9 @@ export const listNotificationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).default(20),
 });
 
+export const updateNotificationPrefsSchema = z.object({
+  email: z.string().email().max(254).optional(),
+  webhookUrl: z.string().url().max(2048).optional(),
+});
+
 export const MAX_PAGINATION_LIMIT = 100;

@@ -33,6 +33,9 @@ if (process.env.NODE_ENV !== 'test') {
   import('./workers/expiryWorker.js').then(({ startExpirySweeper }) => {
     startExpirySweeper();
   });
+  import('./workers/notificationWorker.js').then(({ startNotificationWorker }) => {
+    startNotificationWorker();
+  });
 }
 
 const app = express();
@@ -88,6 +91,11 @@ if (process.env.NODE_ENV !== 'test') {
         ]);
       await Promise.all([shutdownVerificationWorker(), shutdownRewardWorker()]);
       logger.info('Background workers shut down');
+
+      const { shutdownNotificationWorker } =
+        await import('./workers/notificationWorker.js');
+      await shutdownNotificationWorker();
+      logger.info('Notification dispatch worker shut down');
 
       const { stopExpirySweeper } = await import('./workers/expiryWorker.js');
       stopExpirySweeper();

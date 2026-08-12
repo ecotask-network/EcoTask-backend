@@ -14,6 +14,11 @@ export default {
     rewardEngineContractId: process.env.REWARD_ENGINE_CONTRACT_ID || '',
   },
   ipfs: { web3StorageToken: process.env.WEB3_STORAGE_TOKEN || '' },
+  notification: {
+    webhookTimeoutMs: parseInt(process.env.NOTIFICATION_WEBHOOK_TIMEOUT_MS || '5000', 10),
+    emailFrom:
+      process.env.NOTIFICATION_EMAIL_FROM || 'EcoTask <no-reply@ecotask.network>',
+  },
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',

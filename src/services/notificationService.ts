@@ -1,5 +1,6 @@
 import prisma from '../utils/prisma.js';
 import logger from '../utils/logger.js';
+import { enqueueNotificationDispatch } from '../workers/notificationWorker.js';
 
 export interface NotificationInput {
   userId: string;
@@ -10,7 +11,8 @@ export interface NotificationInput {
 
 export async function createNotification(input: NotificationInput): Promise<void> {
   try {
-    await prisma.notification.create({ data: input });
+    const notification = await prisma.notification.create({ data: input });
+    await enqueueNotificationDispatch(notification.id);
   } catch (err) {
     logger.error('Failed to persist notification', { err, ...input });
   }

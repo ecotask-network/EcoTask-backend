@@ -9,6 +9,9 @@ jest.mock('../../src/workers/verificationWorker', () => ({
 jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
+    user: {
+      update: jest.fn(),
+    },
     notification: {
       findMany: jest.fn(),
       count: jest.fn(),
@@ -22,6 +25,7 @@ jest.mock('../../src/utils/prisma', () => ({
 import prisma from '../../src/utils/prisma';
 
 const mockPrisma = prisma as unknown as {
+  user: { update: jest.Mock };
   notification: {
     findMany: jest.Mock;
     count: jest.Mock;
@@ -131,6 +135,42 @@ describe('Notification Routes', () => {
         .set('Authorization', `Bearer ${userToken()}`);
       expect(res.status).toBe(200);
       expect(res.body.updated).toBe(5);
+    });
+  });
+
+  describe('POST /notifications/preferences', () => {
+    it('updates delivery channels for the logged-in user', async () => {
+      mockPrisma.user.update.mockResolvedValue({
+        id: 'user-id',
+        email: 'user@example.com',
+        webhookUrl: 'https://hooks.example.com/ecotask',
+      });
+      const res = await request(app)
+        .post('/notifications/preferences')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .send({
+          email: 'user@example.com',
+          webhookUrl: 'https://hooks.example.com/ecotask',
+        });
+      expect(res.status).toBe(200);
+      expect(res.body.preferences.email).toBe('user@example.com');
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-id' },
+        data: {
+          email: 'user@example.com',
+          webhookUrl: 'https://hooks.example.com/ecotask',
+        },
+        select: { id: true, email: true, webhookUrl: true },
+      });
+    });
+
+    it('rejects an invalid webhook URL', async () => {
+      const res = await request(app)
+        .post('/notifications/preferences')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .send({ webhookUrl: 'not-a-url' });
+      expect(res.status).toBe(400);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
 });

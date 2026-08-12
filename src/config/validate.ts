@@ -13,6 +13,8 @@ const envSchema = z.object({
   STELLAR_ORACLE_SECRET_KEY: z.string().optional(),
   REWARD_ENGINE_CONTRACT_ID: z.string().optional(),
   WEB3_STORAGE_TOKEN: z.string().optional(),
+  NOTIFICATION_WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+  NOTIFICATION_EMAIL_FROM: z.string().default('EcoTask <no-reply@ecotask.network>'),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

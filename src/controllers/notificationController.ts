@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
 import {
   listNotificationsQuerySchema,
+  updateNotificationPrefsSchema,
   MAX_PAGINATION_LIMIT,
 } from '../utils/validation.js';
 
@@ -63,4 +64,21 @@ export async function markAllRead(req: Request, res: Response) {
     data: { readAt: new Date() },
   });
   return res.json({ updated: result.count });
+}
+
+export async function updateNotificationPrefs(req: Request, res: Response) {
+  const parsed = updateNotificationPrefsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res
+      .status(400)
+      .json({ error: 'invalid request body', details: parsed.error.flatten() });
+  }
+
+  const user = await prisma.user.update({
+    where: { id: req.user!.userId },
+    data: parsed.data,
+    select: { id: true, email: true, webhookUrl: true },
+  });
+
+  return res.json({ preferences: user });
 }

@@ -284,9 +284,22 @@ GET    /api/users/:id/impact   # Get impact history (trees, plastic, CO₂)
 ```
 GET    /api/notifications             # Paginated inbox for the logged-in user
 GET    /api/notifications/unread-count
+POST   /api/notifications/preferences # Set email + webhook delivery channels
 POST   /api/notifications/:id/read    # Mark one notification as read
 POST   /api/notifications/read-all    # Mark all as read
 ```
+
+Beyond the in-app inbox, notifications are pushed to outbound channels. Set
+`email` and/or `webhookUrl` via `POST /api/notifications/preferences` and a
+background worker dispatches each new notification to the configured channels:
+
+- **Webhook** — a JSON payload is POSTed to the user's `webhookUrl`
+  (`NOTIFICATION_WEBHOOK_TIMEOUT_MS` guards the request)
+- **Email** — dispatched through a mock transport that logs the message; swap in
+  an SMTP provider to go live
+
+Each notification tracks which channel it went through (`channel`), whether it
+was delivered (`deliveredAt`) and any delivery failure (`deliveryError`).
 
 ### Analytics
 
