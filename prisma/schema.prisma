@@ -86,13 +86,18 @@ model Proof {
 }
 
 model ProofPhoto {
-  id       String @id @default(uuid())
-  proofId  String @map("proof_id")
-  cid      String
-  filename String
+  id         String    @id @default(uuid())
+  proofId    String    @map("proof_id")
+  cid        String
+  filename   String
+  sha256     String?   @unique
+  width      Int?
+  height     Int?
+  capturedAt DateTime? @map("captured_at")
 
   proof Proof @relation(fields: [proofId], references: [id])
 
+  @@index([sha256])
   @@map("proof_photos")
 }
 

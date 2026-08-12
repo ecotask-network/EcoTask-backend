@@ -1,109 +1,192 @@
-import { autoVerify } from "../../src/services/verificationService";
-import { isWithinRadius } from "../../src/services/geoService";
+import { autoVerify } from '../../src/services/verificationService';
+import { isWithinRadius } from '../../src/services/geoService';
 
-jest.mock("../../src/utils/prisma", () => ({
+jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
     proof: {
       findUnique: jest.fn(),
     },
+    proofPhoto: {
+      count: jest.fn(),
+    },
   },
 }));
 
-import prisma from "../../src/utils/prisma";
+import prisma from '../../src/utils/prisma';
 
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock };
+  proofPhoto: { count: jest.Mock };
 };
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
-    id: "task-1",
-    title: "Plant Trees",
+    id: 'task-1',
+    title: 'Plant Trees',
     lat: -1.2921,
     lng: 36.8219,
     radiusMeters: 100,
     expiresAt: null,
     rewardAmount: 50,
-    rewardToken: "ECO",
+    rewardToken: 'ECO',
     ...overrides,
   };
 }
 
-describe("VerificationService", () => {
+describe('VerificationService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("approves proof with valid GPS and photos", async () => {
+  it('approves proof with valid GPS and photos', async () => {
     mockPrisma.proof.findUnique.mockResolvedValue({
-      id: "proof-1",
+      id: 'proof-1',
       lat: -1.2921,
       lng: 36.8219,
-      photos: [{ id: "photo-1", cid: "cid-1", filename: "test.jpg" }],
+      photos: [{ id: 'photo-1', cid: 'cid-1', filename: 'test.jpg' }],
       task: makeTask(),
     });
 
-    const result = await autoVerify("proof-1");
-    expect(result.verdict).toBe("approved");
+    const result = await autoVerify('proof-1');
+    expect(result.verdict).toBe('approved');
     expect(result.confidence).toBeGreaterThanOrEqual(0.7);
   });
 
-  it("rejects proof with no GPS, no photos, and expired task", async () => {
+  it('rejects proof with no GPS, no photos, and expired task', async () => {
     const yesterday = new Date(Date.now() - 86400000);
     mockPrisma.proof.findUnique.mockResolvedValue({
-      id: "proof-2",
+      id: 'proof-2',
       lat: null,
       lng: null,
       photos: [],
       task: makeTask({ expiresAt: yesterday }),
     });
 
-    const result = await autoVerify("proof-2");
-    expect(result.verdict).toBe("rejected");
+    const result = await autoVerify('proof-2');
+    expect(result.verdict).toBe('rejected');
     expect(result.confidence).toBeLessThan(0.4);
   });
 
-  it("returns inconclusive for partial data (GPS but no photos, expired)", async () => {
+  it('returns inconclusive for partial data (GPS but no photos, expired)', async () => {
     const yesterday = new Date(Date.now() - 86400000);
     mockPrisma.proof.findUnique.mockResolvedValue({
-      id: "proof-3",
+      id: 'proof-3',
       lat: -1.2921,
       lng: 36.8219,
       photos: [],
       task: makeTask({ expiresAt: yesterday }),
     });
 
-    const result = await autoVerify("proof-3");
-    expect(result.verdict).toBe("inconclusive");
+    const result = await autoVerify('proof-3');
+    expect(result.verdict).toBe('inconclusive');
     expect(result.confidence).toBeGreaterThanOrEqual(0.4);
     expect(result.confidence).toBeLessThan(0.7);
   });
 
-  it("returns inconclusive for proof outside GPS radius", async () => {
+  it('returns inconclusive for proof outside GPS radius', async () => {
     mockPrisma.proof.findUnique.mockResolvedValue({
-      id: "proof-4",
+      id: 'proof-4',
       lat: 0.0,
       lng: 0.0,
-      photos: [{ id: "photo-1" }],
+      photos: [{ id: 'photo-1' }],
       task: makeTask(),
     });
 
-    const result = await autoVerify("proof-4");
-    expect(result.verdict).toBe("inconclusive");
+    const result = await autoVerify('proof-4');
+    expect(result.verdict).toBe('inconclusive');
   });
 
-  it("returns inconclusive for expired task with valid GPS but no photos", async () => {
+  it('returns inconclusive for expired task with valid GPS but no photos', async () => {
     const yesterday = new Date(Date.now() - 86400000);
     mockPrisma.proof.findUnique.mockResolvedValue({
-      id: "proof-5",
+      id: 'proof-5',
       lat: -1.2921,
       lng: 36.8219,
       photos: [],
       task: makeTask({ expiresAt: yesterday }),
     });
 
-    const result = await autoVerify("proof-5");
-    expect(result.verdict).toBe("inconclusive");
+    const result = await autoVerify('proof-5');
+    expect(result.verdict).toBe('inconclusive');
+  });
+
+  it('rejects a proof reusing a photo already submitted elsewhere', async () => {
+    mockPrisma.proofPhoto.count.mockResolvedValue(1);
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      id: 'proof-6',
+      lat: -1.2921,
+      lng: 36.8219,
+      photos: [
+        {
+          id: 'photo-1',
+          cid: 'cid-1',
+          filename: 'test.jpg',
+          sha256: 'dup-hash',
+          width: 1920,
+          height: 1080,
+          capturedAt: new Date(),
+        },
+      ],
+      task: makeTask(),
+    });
+
+    const result = await autoVerify('proof-6');
+    expect(result.verdict).toBe('rejected');
+    expect(result.confidence).toBeLessThan(0.4);
+  });
+
+  it('approves a proof with high-resolution, recent, unique photos', async () => {
+    mockPrisma.proofPhoto.count.mockResolvedValue(0);
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      id: 'proof-7',
+      lat: -1.2921,
+      lng: 36.8219,
+      photos: [
+        {
+          id: 'photo-1',
+          cid: 'cid-1',
+          filename: 'test.jpg',
+          sha256: 'unique-hash',
+          width: 4032,
+          height: 3024,
+          capturedAt: new Date(),
+        },
+      ],
+      task: makeTask(),
+    });
+
+    const result = await autoVerify('proof-7');
+    expect(result.verdict).toBe('approved');
+    expect(result.confidence).toBeGreaterThanOrEqual(0.7);
+    expect(mockPrisma.proofPhoto.count).toHaveBeenCalledWith({
+      where: { sha256: { in: ['unique-hash'] }, proofId: { not: 'proof-7' } },
+    });
+  });
+
+  it('penalizes photos lacking recent EXIF capture metadata', async () => {
+    const oldCapture = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    mockPrisma.proofPhoto.count.mockResolvedValue(0);
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      id: 'proof-8',
+      lat: -1.2921,
+      lng: 36.8219,
+      photos: [
+        {
+          id: 'photo-1',
+          cid: 'cid-1',
+          filename: 'test.jpg',
+          sha256: 'stale-hash',
+          width: 4032,
+          height: 3024,
+          capturedAt: oldCapture,
+        },
+      ],
+      task: makeTask(),
+    });
+
+    const result = await autoVerify('proof-8');
+    expect(result.verdict).toBe('approved');
+    expect(result.confidence).toBe(0.95);
   });
 });

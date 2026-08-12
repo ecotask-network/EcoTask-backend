@@ -256,6 +256,20 @@ Proofs that the auto-verifier cannot decide are left for an admin to review via
 `POST /api/proofs/:id/review`, which resolves the verdict, notifies the user,
 and enqueues the reward payout when approved.
 
+### Photo analysis
+
+Every uploaded photo is hashed (SHA-256) and its EXIF metadata is extracted on
+submission. The auto-verifier uses this data for real checks instead of the old
+placeholder `photo_quality` scoring:
+
+- `photo_quality` — at least one photo meets the minimum resolution (480×480)
+- `photo_recency` — at least one photo carries an EXIF capture timestamp within
+  the last 7 days (blocks stale/stock images)
+- `photo_not_duplicate` — no photo may reuse a hash already submitted on another
+  proof; reuse is treated as fraud and **immediately rejects** the proof
+
+These checks complement the existing GPS-radius and task-expiry checks.
+
 ### Users
 
 ```

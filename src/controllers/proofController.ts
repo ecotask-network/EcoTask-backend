@@ -11,6 +11,7 @@ import {
 } from '../utils/validation.js';
 import { uploadToIPFS } from '../services/ipfsService.js';
 import { isWithinZone } from '../services/geoService.js';
+import { hashFile, extractPhotoMetadata } from '../services/photoService.js';
 import { notifyProofStatus } from '../services/notificationService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
 import { enqueueRewardPayout } from '../workers/rewardWorker.js';
@@ -75,6 +76,11 @@ export async function submitProof(req: Request, res: Response) {
         gpsFromPhoto = await extractGps(file.path);
       }
 
+      const [sha256, metadata] = await Promise.all([
+        hashFile(file.path),
+        extractPhotoMetadata(file.path),
+      ]);
+
       const cid = await uploadToIPFS(file.path, file.filename);
 
       await prisma.proofPhoto.create({
@@ -82,6 +88,10 @@ export async function submitProof(req: Request, res: Response) {
           proofId: proof.id,
           cid,
           filename: file.originalname,
+          sha256,
+          width: metadata.width,
+          height: metadata.height,
+          capturedAt: metadata.capturedAt,
         },
       });
 
