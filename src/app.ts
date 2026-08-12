@@ -13,6 +13,7 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import analyticsRoutes from './routes/analytics.js';
 import auditRoutes from './routes/audit.js';
 import notificationRoutes from './routes/notifications.js';
+import validatorRoutes from './routes/validators.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { apiLimiter, authLimiter, proofLimiter } from './middleware/rateLimit.js';
 import { sanitizeInput } from './middleware/sanitize.js';
@@ -66,6 +67,7 @@ app.use('/leaderboard', leaderboardRoutes);
 app.use('/analytics', analyticsRoutes);
 app.use('/audit', auditRoutes);
 app.use('/notifications', notificationRoutes);
+app.use(validatorRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

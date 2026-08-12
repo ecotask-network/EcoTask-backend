@@ -32,6 +32,10 @@ jest.mock('../../src/services/notificationService', () => ({
   notifyProofStatus: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../../src/services/validatorService', () => ({
+  assignValidators: jest.fn().mockResolvedValue(0),
+}));
+
 jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
@@ -131,5 +135,32 @@ describe('Verification Worker', () => {
     });
     expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
     expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1');
+  });
+
+  it('assigns inconclusive proofs to community validators', async () => {
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      taskId: 'task-1',
+      status: 'PENDING',
+    });
+    mockPrisma.proof.update.mockResolvedValue({});
+    const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      autoVerify: jest.Mock;
+    };
+    autoVerify.mockResolvedValue({ verdict: 'inconclusive', confidence: 0.5, notes: '' });
+    const { assignValidators } = jest.requireMock(
+      '../../src/services/validatorService',
+    ) as {
+      assignValidators: jest.Mock;
+    };
+    assignValidators.mockResolvedValue(3);
+
+    await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
+
+    expect(assignValidators).toHaveBeenCalledWith('proof-1');
+    expect(mockPrisma.proof.update).not.toHaveBeenCalledWith({
+      where: { id: 'proof-1' },
+      data: { status: 'APPROVED' },
+    });
   });
 });

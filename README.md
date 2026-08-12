@@ -215,6 +215,20 @@ WEB3_STORAGE_TOKEN=YOUR_WEB3_STORAGE_TOKEN
 # Auth
 JWT_SECRET=your_jwt_secret_here
 JWT_EXPIRES_IN=7d
+
+# Rate limits (per-user)
+PROOF_RATE_LIMIT_WINDOW_MS=3600000
+PROOF_RATE_LIMIT_MAX=20
+CLAIM_RATE_LIMIT_WINDOW_MS=3600000
+CLAIM_RATE_LIMIT_MAX=50
+
+# Notifications
+NOTIFICATION_WEBHOOK_TIMEOUT_MS=5000
+NOTIFICATION_EMAIL_FROM=EcoTask <no-reply@ecotask.network>
+
+# Community validation
+VALIDATOR_ASSIGNMENT_COUNT=3
+VALIDATOR_QUORUM_REQUIRED=2
 ```
 
 ---
@@ -329,6 +343,42 @@ GET    /api/leaderboard          # Top contributors (proofs + total reward)
 GET    /api/audit                # Query audit logs (user, resource, paginated)
 ```
 
+### Community validation
+
+Proofs that the auto-checks can't resolve are routed to community validators
+instead of always landing in the admin queue. Every submission is coordinated by
+`validatorService`:
+
+```
+Auto-check inconclusive
+       │
+       ▼
+assignValidators(): picks `VALIDATOR_ASSIGNMENT_COUNT` least-loaded
+validators (lowest reviewCount), excluding the proof's submitter
+       │
+       ▼
+Validators cast verdicts via POST /api/validator/reviews/:proofId
+       │
+       ▼
+resolveQuorum(): first verdict to reach `VALIDATOR_QUORUM_REQUIRED`
+votes finalizes the proof — then notifies, completes the task and pays
+       │
+       ▼
+Split votes with no quorum → escalated to admin review
+```
+
+Validator reputation is rewarded: agreeing with the final quorum verdict earns
+`+1` `validatorReputation`, dissenting costs `-1`. Admin endpoints manage the
+roster:
+
+```
+GET    /api/validators                     # List validators by reputation (admin)
+POST   /api/validators/:userId/activate    # Promote a user to validator (admin)
+POST   /api/validators/:userId/deactivate  # Demote back to user (admin)
+GET    /api/validator/reviews              # My assigned, undecided reviews (validator)
+POST   /api/validator/reviews/:proofId     # Cast verdict: approved | rejected
+```
+
 ---
 
 ## 🔍 Verification Flow
@@ -371,9 +421,11 @@ verificationWorker picks up job
             User notified ✅
 ```
 
-> Admin review: proofs the auto-checks can't resolve are exposed via
-> `GET /api/proofs/review` and resolved with `POST /api/proofs/:id/review`,
-> which re-enters the flow at "Proof approved / rejected".
+> Inconclusive proofs are routed to community validators for quorum review (see
+> [Community validation](#community-validation)); only split votes with no quorum
+> fall through to the admin review queue (`GET /api/proofs/review`, resolved via
+> `POST /api/proofs/:id/review`), which re-enters the flow at "Proof approved /
+> rejected".
 
 ---
 
@@ -409,22 +461,21 @@ lively plan.
   confidence scoring, plus admin review for inconclusive proofs
 - Reward payouts via the Stellar SDK (mock mode for local dev)
 - DB-backed notification inbox with read/unread tracking
+- Notification delivery: webhook + email channels with delivery tracking
+- Per-user Redis-backed rate limits on proof submissions and task claims
+- Photo analysis: SHA-256 hashing, resolution/recency checks, duplicate detection
+- Community validator program: quorum voting, reputation, and fair assignment
 - Platform analytics, daily trends, and a rewards-enriched leaderboard
 - Audit logging of mutating admin/API actions
 
 ### In progress
 
-- Notification delivery to end users — the inbox is persisted; push/email/webhook
-  dispatch is the next step
 - Integrating the `reward-engine` Soroban contract (the oracle secret and
   contract ID are configured, but payouts currently use a direct payment op)
-- Real photo analysis to replace the placeholder `photo_quality` check
+- Swap the mock email transport for a real SMTP provider
 
 ### Planned
 
-- Community validator program: reviewer reputation, quorum voting, and fair
-  review assignment
-- Per-user rate limits and abuse controls beyond the current global limiters
 - API versioning, pagination hypermedia, and generated OpenAPI docs
 - Impact reporting standardization (trees, plastic, CO₂) with exportable
   verifiable claims

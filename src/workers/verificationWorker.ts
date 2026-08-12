@@ -1,6 +1,7 @@
 import { Worker, Queue } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
+import { assignValidators } from '../services/validatorService';
 import { completeTaskIfFull } from '../models/task';
 import { enqueueRewardPayout } from './rewardWorker';
 import config from '../config/default';
@@ -59,7 +60,14 @@ const worker = new Worker(
       await prisma.proof.update({ where: { id: proofId }, data: { status: 'REJECTED' } });
       await notifyProofStatus(proof.userId, proofId, 'REJECTED');
     } else {
-      logger.info('Proof inconclusive — needs manual review', { proofId });
+      const assigned = await assignValidators(proofId);
+      if (assigned > 0) {
+        logger.info('Proof assigned to community validators', { proofId, assigned });
+      } else {
+        logger.info('Proof inconclusive — no validators available, needs manual review', {
+          proofId,
+        });
+      }
     }
 
     await prisma.verification.create({

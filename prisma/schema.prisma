@@ -23,12 +23,15 @@ model User {
   role      String   @default("user")
   email     String?
   webhookUrl String? @map("webhook_url")
+  validatorReputation Int @default(0) @map("validator_reputation")
+  reviewCount Int      @default(0) @map("review_count")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   proofs Proof[]
   claims TaskClaim[]
   notifications Notification[]
+  validatorVotes ValidatorVote[]
 }
 
 model Task {
@@ -83,6 +86,7 @@ model Proof {
   task       Task          @relation(fields: [taskId], references: [id])
   photos     ProofPhoto[]
   verifications Verification[]
+  validatorVotes ValidatorVote[]
 
   @@map("proofs")
 }
@@ -114,6 +118,23 @@ model Verification {
   proof Proof @relation(fields: [proofId], references: [id])
 
   @@map("verifications")
+}
+
+model ValidatorVote {
+  id          String    @id @default(uuid())
+  proofId     String    @map("proof_id")
+  validatorId String    @map("validator_id")
+  verdict     String?
+  notes       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  decidedAt   DateTime? @map("decided_at")
+
+  proof     Proof @relation(fields: [proofId], references: [id], onDelete: Cascade)
+  validator User  @relation(fields: [validatorId], references: [id], onDelete: Cascade)
+
+  @@unique([proofId, validatorId])
+  @@index([validatorId, decidedAt])
+  @@map("validator_votes")
 }
 
 model AuditLog {

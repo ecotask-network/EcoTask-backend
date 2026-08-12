@@ -19,6 +19,8 @@ const envSchema = z.object({
   PROOF_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
   CLAIM_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3600000),
   CLAIM_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(50),
+  VALIDATOR_ASSIGNMENT_COUNT: z.coerce.number().int().positive().default(3),
+  VALIDATOR_QUORUM_REQUIRED: z.coerce.number().int().positive().default(2),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

@@ -31,6 +31,10 @@ export default {
     ),
     claimMax: parseInt(process.env.CLAIM_RATE_LIMIT_MAX || '50', 10),
   },
+  validator: {
+    assignmentCount: parseInt(process.env.VALIDATOR_ASSIGNMENT_COUNT || '3', 10),
+    quorumRequired: parseInt(process.env.VALIDATOR_QUORUM_REQUIRED || '2', 10),
+  },
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',

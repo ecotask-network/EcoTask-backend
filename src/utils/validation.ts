@@ -84,6 +84,11 @@ export const reviewProofSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+export const castValidatorVoteSchema = z.object({
+  verdict: z.enum(['approved', 'rejected']),
+  notes: z.string().max(1000).optional(),
+});
+
 export const listNotificationsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).default(20),
