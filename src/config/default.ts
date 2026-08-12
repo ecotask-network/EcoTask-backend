@@ -19,6 +19,18 @@ export default {
     emailFrom:
       process.env.NOTIFICATION_EMAIL_FROM || 'EcoTask <no-reply@ecotask.network>',
   },
+  rateLimit: {
+    proofWindowMs: parseInt(
+      process.env.PROOF_RATE_LIMIT_WINDOW_MS || String(60 * 60 * 1000),
+      10,
+    ),
+    proofMax: parseInt(process.env.PROOF_RATE_LIMIT_MAX || '20', 10),
+    claimWindowMs: parseInt(
+      process.env.CLAIM_RATE_LIMIT_WINDOW_MS || String(60 * 60 * 1000),
+      10,
+    ),
+    claimMax: parseInt(process.env.CLAIM_RATE_LIMIT_MAX || '50', 10),
+  },
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',

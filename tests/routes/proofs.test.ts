@@ -37,6 +37,14 @@ jest.mock('../../src/services/notificationService', () => ({
   notifyProofStatus: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../../src/services/rateLimitService', () => ({
+  rateLimiter: {
+    check: jest
+      .fn()
+      .mockResolvedValue({ allowed: true, remaining: 20, retryAfterSeconds: 0 }),
+  },
+}));
+
 jest.mock('../../src/services/ipfsService', () => ({
   uploadToIPFS: jest.fn().mockResolvedValue('mock-cid-test'),
   uploadMultipleToIPFS: jest.fn(),

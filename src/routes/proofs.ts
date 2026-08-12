@@ -4,12 +4,14 @@ import { authMiddleware } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { auditMiddleware } from '../middleware/audit.js';
 import { upload } from '../middleware/upload.js';
+import { proofSubmissionLimiter } from '../middleware/rateLimit.js';
 
 const router = Router();
 
 router.post(
   '/',
   authMiddleware,
+  proofSubmissionLimiter,
   auditMiddleware('proof.submit', 'proof'),
   upload.array('photos', 5),
   proofController.submitProof,

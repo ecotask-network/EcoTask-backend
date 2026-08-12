@@ -270,6 +270,20 @@ placeholder `photo_quality` scoring:
 
 These checks complement the existing GPS-radius and task-expiry checks.
 
+### Rate limiting & abuse controls
+
+Beyond the global `express-rate-limit` throttles, sensitive endpoints apply
+per-user (or per-IP for anonymous callers) limits backed by Redis:
+
+| Endpoint                 | Default limit | Env vars                                             |
+| ------------------------ | ------------- | ---------------------------------------------------- |
+| `POST /api/proofs`       | 20 / hour     | `PROOF_RATE_LIMIT_WINDOW_MS`, `PROOF_RATE_LIMIT_MAX` |
+| `POST/DELETE /:id/claim` | 50 / hour     | `CLAIM_RATE_LIMIT_WINDOW_MS`, `CLAIM_RATE_LIMIT_MAX` |
+
+The limiter reports `RateLimit-*` headers and `Retry-After` on 429s, and
+fails open if Redis is unreachable so infrastructure hiccups never block
+legitimate traffic.
+
 ### Users
 
 ```
