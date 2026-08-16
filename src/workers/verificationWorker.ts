@@ -8,6 +8,7 @@ import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { registerWorker, unregisterWorker } from '../utils/workerHealth';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
@@ -89,7 +90,11 @@ worker.on('failed', (job, err) =>
   logger.error('Verification job failed', { jobId: job?.id, err }),
 );
 
+// Register worker for health tracking
+registerWorker('verification');
+
 export async function shutdownVerificationWorker(): Promise<void> {
+  unregisterWorker('verification');
   await worker.close();
   await verificationQueue.close();
   await connection.quit();

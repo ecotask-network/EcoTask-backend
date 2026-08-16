@@ -1,8 +1,11 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { getReadinessStatus } from '../utils/workerHealth.js';
 
 const router = Router();
 
+// Liveness endpoint - checks if the service is running (Postgres + Redis only)
+// Used by Docker HEALTHCHECK
 router.get('/', async (_req: Request, res: Response) => {
   const checks: Record<string, string> = {};
 
@@ -38,6 +41,30 @@ router.get('/', async (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     checks,
   });
+});
+
+// Readiness endpoint - checks if the service is ready to handle traffic
+// Includes worker health and queue metrics
+router.get('/readiness', async (_req: Request, res: Response) => {
+  try {
+    const readiness = await getReadinessStatus();
+    const status = readiness.status === 'ok' ? 200 : 503;
+
+    res.status(status).json({
+      status: readiness.status,
+      service: 'ecotask-backend',
+      timestamp: new Date().toISOString(),
+      workers: readiness.workers,
+      queues: readiness.queues,
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'degraded',
+      service: 'ecotask-backend',
+      timestamp: new Date().toISOString(),
+      error: 'Failed to check readiness',
+    });
+  }
 });
 
 export default router;

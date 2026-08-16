@@ -4,6 +4,7 @@ import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { registerWorker, unregisterWorker } from '../utils/workerHealth';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let connection: any = null;
@@ -76,9 +77,13 @@ export function startRewardWorker(): void {
   worker.on('failed', (job, err) =>
     logger.error('Reward job failed', { jobId: job?.id, err }),
   );
+
+  // Register worker for health tracking
+  registerWorker('reward');
 }
 
 export async function shutdownRewardWorker(): Promise<void> {
+  unregisterWorker('reward');
   if (worker) {
     await worker.close();
     worker = null;
