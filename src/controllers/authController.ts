@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import type { SignOptions } from 'jsonwebtoken';
+import crypto from 'crypto';
+import { rateLimiter } from '../services/rateLimitService.js';
 import config from '../config/default.js';
 import { generateChallenge, verifyStellarSignature } from '../services/stellarService.js';
 import { findOrCreateUser } from '../models/user.js';
@@ -54,6 +56,10 @@ export async function login(req: Request, res: Response) {
   const user = await findOrCreateUser(wallet);
   const token = jwt.sign({ userId: user.id, wallet: user.wallet }, config.jwt.secret, {
     expiresIn: config.jwt.expiresIn,
+    algorithm: 'HS256',
+    issuer: config.jwt.issuer,
+    audience: config.jwt.audience,
+    jwtid: crypto.randomUUID(),
   } as SignOptions);
 
   return res.json({ token, user });
@@ -61,4 +67,29 @@ export async function login(req: Request, res: Response) {
 
 export function verify(req: Request, res: Response) {
   return res.json({ user: req.user });
+}
+
+export async function logout(req: Request, res: Response) {
+  try {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'missing authorization header' });
+    }
+    const token = header.slice(7);
+    const decoded = jwt.decode(token) as jwt.JwtPayload | null;
+
+    if (!decoded || !decoded.jti || !decoded.exp) {
+      return res.status(400).json({ error: 'invalid token payload' });
+    }
+
+    const ttlSeconds = Math.max(0, decoded.exp - Math.floor(Date.now() / 1000));
+    if (ttlSeconds > 0) {
+      const client = rateLimiter.getClient();
+      await client.set(`jwt_denylist:${decoded.jti}`, '1', 'EX', ttlSeconds);
+    }
+
+    return res.json({ success: true });
+  } catch {
+    return res.status(500).json({ error: 'logout failed' });
+  }
 }

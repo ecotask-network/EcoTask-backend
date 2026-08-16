@@ -1,4 +1,4 @@
-import prisma from "../utils/prisma.js";
+import prisma from '../utils/prisma.js';
 
 export async function findOrCreateUser(wallet: string) {
   let user = await prisma.user.findUnique({ where: { wallet } });
@@ -23,7 +23,10 @@ export async function getUserById(id: string) {
   });
 }
 
-export async function updateUser(id: string, data: { name?: string; bio?: string; avatarUrl?: string }) {
+export async function updateUser(
+  id: string,
+  data: { name?: string; bio?: string; avatarUrl?: string },
+) {
   return prisma.user.update({
     where: { id },
     data,
@@ -42,7 +45,7 @@ export async function updateUser(id: string, data: { name?: string; bio?: string
 
 export async function getUserImpact(id: string) {
   const proofs = await prisma.proof.findMany({
-    where: { userId: id, status: "APPROVED" },
+    where: { userId: id, status: 'APPROVED' },
     include: { task: { select: { type: true, rewardAmount: true } } },
   });
 

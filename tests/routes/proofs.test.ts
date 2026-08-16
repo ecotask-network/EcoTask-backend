@@ -42,6 +42,9 @@ jest.mock('../../src/services/rateLimitService', () => ({
     check: jest
       .fn()
       .mockResolvedValue({ allowed: true, remaining: 20, retryAfterSeconds: 0 }),
+    getClient: () => ({
+      get: jest.fn().mockResolvedValue(null),
+    }),
   },
 }));
 
@@ -71,6 +74,12 @@ function userToken(): string {
   return jwt.sign(
     { userId: 'user-id', wallet: 'GUSER...' },
     'dev-secret-change-in-production',
+    {
+      algorithm: 'HS256',
+      issuer: 'ecotask-backend',
+      audience: 'ecotask-users',
+      jwtid: 'test-jti-user',
+    },
   );
 }
 
@@ -324,6 +333,12 @@ describe('Proof Routes', () => {
       jwt.sign(
         { userId: 'admin-id', wallet: 'GADMIN...' },
         'dev-secret-change-in-production',
+        {
+          algorithm: 'HS256',
+          issuer: 'ecotask-backend',
+          audience: 'ecotask-users',
+          jwtid: 'test-jti-admin',
+        },
       );
 
     it('forbids non-admin users', async () => {
