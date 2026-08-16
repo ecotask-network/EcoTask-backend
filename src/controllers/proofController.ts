@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import ExifReader from 'exifreader';
 import fs from 'fs';
 import prisma from '../utils/prisma.js';
 import {
@@ -17,19 +16,6 @@ import { enqueueVerification } from '../workers/verificationWorker.js';
 import { enqueueRewardPayout } from '../workers/rewardWorker.js';
 import { completeTaskIfFull } from '../models/task.js';
 import logger from '../utils/logger.js';
-
-async function extractGps(
-  filePath: string,
-): Promise<{ lat: number; lng: number } | null> {
-  const tags = await ExifReader.load(fs.readFileSync(filePath));
-  if (tags.GPSLatitude && tags.GPSLongitude) {
-    const lat = parseFloat(tags.GPSLatitude.description as string);
-    const lng = parseFloat(tags.GPSLongitude.description as string);
-    if (isNaN(lat) || isNaN(lng)) return null;
-    return { lat, lng };
-  }
-  return null;
-}
 
 export async function submitProof(req: Request, res: Response) {
   const parsed = submitProofSchema.safeParse(req.body);
@@ -67,19 +53,23 @@ export async function submitProof(req: Request, res: Response) {
     },
   });
 
+  // GPS extracted from the first photo that carries EXIF GPS.  We collect it
+  // alongside width/height in a single extractPhotoMetadata pass — no separate
+  // EXIF load needed.
   let gpsFromPhoto: { lat: number; lng: number } | null = null;
 
   const files = req.files as Express.Multer.File[] | undefined;
   if (files && files.length > 0) {
     for (const file of files) {
-      if (!gpsFromPhoto) {
-        gpsFromPhoto = await extractGps(file.path);
-      }
-
       const [sha256, metadata] = await Promise.all([
         hashFile(file.path),
         extractPhotoMetadata(file.path),
       ]);
+
+      // Capture the first photo's EXIF GPS for cross-checking below.
+      if (!gpsFromPhoto && metadata.gpsLat != null && metadata.gpsLng != null) {
+        gpsFromPhoto = { lat: metadata.gpsLat, lng: metadata.gpsLng };
+      }
 
       const cid = await uploadToIPFS(file.path, file.filename);
 
@@ -104,36 +94,60 @@ export async function submitProof(req: Request, res: Response) {
     }
   }
 
-  const effectiveLat = bodyLat ?? gpsFromPhoto?.lat ?? null;
-  const effectiveLng = bodyLng ?? gpsFromPhoto?.lng ?? null;
-
-  if (effectiveLat !== null && effectiveLng !== null) {
-    await prisma.proof.update({
-      where: { id: proof.id },
-      data: { lat: effectiveLat, lng: effectiveLng },
-    });
-  }
-
+  // ── GPS cross-check ─────────────────────────────────────────────────────────
+  // When the client supplies body coordinates AND the photo carries its own EXIF
+  // GPS, we verify they agree to within the task radius.  A mismatch means the
+  // submitted body coordinates may be spoofed: we store a flag and route the
+  // proof to manual validator review rather than trusting auto-verification.
+  let gpsMismatch = false;
   if (bodyLat != null && bodyLng != null && gpsFromPhoto) {
-    const withinRadius = isWithinZone(
+    const photoWithinRadius = isWithinZone(
       gpsFromPhoto.lat,
       gpsFromPhoto.lng,
-      bodyLat,
-      bodyLng,
+      task.lat,
+      task.lng,
       task.radiusMeters / 1000,
     );
-    if (!withinRadius) {
-      logger.warn('GPS mismatch between body and photo', {
+    if (!photoWithinRadius) {
+      gpsMismatch = true;
+      logger.warn('GPS mismatch: body coordinates supplied but photo EXIF GPS is outside task radius', {
         proofId: proof.id,
         bodyLat,
         bodyLng,
         photoLat: gpsFromPhoto.lat,
         photoLng: gpsFromPhoto.lng,
+        taskLat: task.lat,
+        taskLng: task.lng,
+        radiusMeters: task.radiusMeters,
       });
     }
   }
 
-  await enqueueVerification(proof.id);
+  // Persist effective coordinates (body GPS takes precedence for storage when
+  // there is no mismatch; photo GPS fills in when body is absent).
+  const effectiveLat = bodyLat ?? gpsFromPhoto?.lat ?? null;
+  const effectiveLng = bodyLng ?? gpsFromPhoto?.lng ?? null;
+
+  const proofUpdateData: { lat?: number; lng?: number; notes?: string } = {};
+  if (effectiveLat !== null && effectiveLng !== null) {
+    proofUpdateData.lat = effectiveLat;
+    proofUpdateData.lng = effectiveLng;
+  }
+  if (gpsMismatch) {
+    proofUpdateData.notes = 'gps_photo_mismatch';
+  }
+  if (Object.keys(proofUpdateData).length > 0) {
+    await prisma.proof.update({
+      where: { id: proof.id },
+      data: proofUpdateData,
+    });
+  }
+
+  // Only enqueue auto-verification when GPS is consistent.  A mismatch leaves
+  // the proof in PENDING status for manual validator review.
+  if (!gpsMismatch) {
+    await enqueueVerification(proof.id);
+  }
 
   const result = await prisma.proof.findUnique({
     where: { id: proof.id },
