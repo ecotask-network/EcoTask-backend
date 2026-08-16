@@ -58,6 +58,7 @@ router.get('/readiness', async (_req: Request, res: Response) => {
       queues: readiness.queues,
     });
   } catch (error) {
+    // Log error but don't expose details
     res.status(503).json({
       status: 'degraded',
       service: 'ecotask-backend',
