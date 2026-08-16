@@ -6,6 +6,14 @@ jest.mock('../../src/workers/verificationWorker', () => ({
   enqueueVerification: jest.fn(),
 }));
 
+jest.mock('../../src/services/rateLimitService', () => ({
+  rateLimiter: {
+    getClient: () => ({
+      get: jest.fn().mockResolvedValue(null),
+    }),
+  },
+}));
+
 jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
@@ -22,7 +30,12 @@ const mockPrisma = prisma as unknown as {
 };
 
 function userToken(userId = 'user-1'): string {
-  return jwt.sign({ userId, wallet: 'GUSER...' }, 'dev-secret-change-in-production');
+  return jwt.sign({ userId, wallet: 'GUSER...' }, 'dev-secret-change-in-production', {
+    algorithm: 'HS256',
+    issuer: 'ecotask-backend',
+    audience: 'ecotask-users',
+    jwtid: 'test-jti',
+  });
 }
 
 const mockUser = {

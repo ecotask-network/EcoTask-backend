@@ -19,6 +19,9 @@ jest.mock('../../src/services/rateLimitService', () => ({
     check: jest
       .fn()
       .mockResolvedValue({ allowed: true, remaining: 50, retryAfterSeconds: 0 }),
+    getClient: () => ({
+      get: jest.fn().mockResolvedValue(null),
+    }),
   },
 }));
 
@@ -58,7 +61,12 @@ const mockPrisma = prisma as unknown as {
 };
 
 function token(userId: string, wallet: string): string {
-  return jwt.sign({ userId, wallet }, 'dev-secret-change-in-production');
+  return jwt.sign({ userId, wallet }, 'dev-secret-change-in-production', {
+    algorithm: 'HS256',
+    issuer: 'ecotask-backend',
+    audience: 'ecotask-users',
+    jwtid: 'test-jti',
+  });
 }
 
 describe('Validator Routes', () => {
