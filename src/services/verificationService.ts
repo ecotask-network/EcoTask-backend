@@ -1,6 +1,6 @@
 import prisma from '../utils/prisma';
 import { isWithinRadius } from './geoService';
-import { hasMinimumResolution, isRecentlyCaptured } from './photoService';
+import { hasMinimumResolution, isRecentlyCaptured, hasFutureCaptureSkew } from './photoService';
 
 interface VerificationResult {
   verdict: 'approved' | 'rejected' | 'inconclusive';
@@ -17,6 +17,7 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
 
   const checks: { pass: boolean; weight: number; name: string }[] = [];
 
+  // ── GPS location ────────────────────────────────────────────────────────────
   if (proof.lat && proof.lng && proof.task.lat && proof.task.lng) {
     const inRange = isWithinRadius(
       proof.lat,
@@ -30,20 +31,36 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
     checks.push({ pass: false, weight: 0.4, name: 'gps_location_missing' });
   }
 
+  // ── Photos present ──────────────────────────────────────────────────────────
   checks.push({ pass: proof.photos.length > 0, weight: 0.15, name: 'photos_present' });
 
+  // ── Photo resolution (decoded pixels, not EXIF) ─────────────────────────────
   checks.push({
     pass: proof.photos.some(hasMinimumResolution),
     weight: 0.1,
     name: 'photo_quality',
   });
 
+  // ── Photo recency (EXIF timestamp within 7-day window) ──────────────────────
   checks.push({
     pass: proof.photos.some((photo) => isRecentlyCaptured(photo.capturedAt)),
     weight: 0.05,
     name: 'photo_recency',
   });
 
+  // ── Timestamp skew (EXIF capturedAt must not be in the future relative to
+  //    proof submission — physically impossible; indicates a forged timestamp) ──
+  const proofCreatedAt = proof.createdAt ?? new Date();
+  const hasSkewedTimestamp = proof.photos.some((photo) =>
+    hasFutureCaptureSkew(photo.capturedAt, proofCreatedAt),
+  );
+  checks.push({
+    pass: !hasSkewedTimestamp,
+    weight: 0.05,
+    name: 'photo_timestamp_not_forged',
+  });
+
+  // ── Duplicate-photo fraud check ─────────────────────────────────────────────
   const hashes = proof.photos.map((p) => p.sha256).filter((h): h is string => Boolean(h));
   let duplicated = false;
   if (hashes.length > 0) {
@@ -63,6 +80,7 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
 
   checks.push({ pass: true, weight: 0.1, name: 'photo_not_duplicate' });
 
+  // ── Task expiry ─────────────────────────────────────────────────────────────
   if (proof.task.expiresAt) {
     const expired = new Date() > proof.task.expiresAt;
     checks.push({ pass: !expired, weight: 0.2, name: 'task_not_expired' });
