@@ -62,7 +62,11 @@ export function getWorkerStatus(name: string): WorkerStatus | undefined {
 }
 
 export function getAllWorkerStatuses(): Record<string, WorkerStatus> {
-  return Object.fromEntries(workerRegistry);
+  const result: Record<string, WorkerStatus> = {};
+  workerRegistry.forEach((status, name) => {
+    result[name] = status;
+  });
+  return result;
 }
 
 async function getQueueMetrics(queueName: string): Promise<QueueMetrics> {
