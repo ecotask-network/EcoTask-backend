@@ -18,7 +18,7 @@ const createAuthMiddleware =
         algorithms: ['HS256'],
         issuer: config.jwt.issuer,
         audience: config.jwt.audience,
-      });
+      }) as jwt.JwtPayload & { userId: string; wallet: string };
     } catch {
       return res.status(401).json({ error: 'invalid token' });
     }

@@ -1,5 +1,5 @@
-import { Request, Response, NextFunction } from "express";
-import { logAudit } from "../services/auditService.js";
+import { Request, Response, NextFunction } from 'express';
+import { logAudit } from '../services/auditService.js';
 
 export function auditMiddleware(action: string, resource: string) {
   return (req: Request, _res: Response, next: NextFunction) => {
@@ -13,7 +13,7 @@ export function auditMiddleware(action: string, resource: string) {
       details: {
         method: req.method,
         path: req.path,
-        body: req.method !== "GET" ? req.body : undefined,
+        body: req.method !== 'GET' ? req.body : undefined,
       },
       ip: req.ip,
     }).catch(() => {});

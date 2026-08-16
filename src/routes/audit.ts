@@ -1,11 +1,11 @@
-import { Router } from "express";
-import { getAuditLogs } from "../services/auditService.js";
-import { authMiddleware } from "../middleware/auth.js";
-import { adminMiddleware } from "../middleware/admin.js";
+import { Router } from 'express';
+import { getAuditLogs } from '../services/auditService.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { adminMiddleware } from '../middleware/admin.js';
 
 const router = Router();
 
-router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
+router.get('/', authMiddleware, adminMiddleware, async (req, res) => {
   const result = await getAuditLogs({
     userId: req.query.userId as string | undefined,
     resource: req.query.resource as string | undefined,
