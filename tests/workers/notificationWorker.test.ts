@@ -65,17 +65,18 @@ describe('Notification Dispatch Worker', () => {
     expect(dispatchNotification).toHaveBeenCalledWith('n-1');
   });
 
-  it('creates the queue lazily and enqueues dispatch jobs', async () => {
+  it('creates the queue lazily and enqueues dispatch jobs using the outbox id as jobId', async () => {
     const queue = getNotificationQueue();
     const addSpy = (queue as unknown as { add: jest.Mock }).add;
 
-    await enqueueNotificationDispatch('n-2');
+    await enqueueNotificationDispatch('outbox-2', 'n-2');
 
     expect(Queue).toHaveBeenCalledWith('notification-dispatch', expect.anything());
     expect(addSpy).toHaveBeenCalledWith(
       'dispatch',
-      { notificationId: 'n-2' },
+      { notificationId: 'n-2', outboxId: 'outbox-2' },
       {
+        jobId: 'outbox-2',
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: { count: 1000 },
@@ -84,10 +85,12 @@ describe('Notification Dispatch Worker', () => {
     );
   });
 
-  it('swallows queue errors so notification creation is not blocked', async () => {
+  it('propagates queue errors so the outbox drainer can retry/dead-letter the row', async () => {
     const addSpy = (getNotificationQueue() as unknown as { add: jest.Mock }).add;
     addSpy.mockRejectedValueOnce(new Error('redis down'));
 
-    await expect(enqueueNotificationDispatch('n-3')).resolves.toBeUndefined();
+    await expect(enqueueNotificationDispatch('outbox-3', 'n-3')).rejects.toThrow(
+      'redis down',
+    );
   });
 });

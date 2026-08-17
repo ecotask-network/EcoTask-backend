@@ -54,9 +54,24 @@ const worker = new Worker(
 
     const result = await autoVerify(proofId);
 
+    // The proof status change, the Verification record, and the
+    // notification (+ its outbox row) are committed atomically. This
+    // guarantees the notification exists iff the proof status change
+    // committed — a crash between "proof approved" and "notification
+    // created" is no longer possible, because there is no gap between them.
     if (result.verdict === 'approved') {
-      await prisma.proof.update({ where: { id: proofId }, data: { status: 'APPROVED' } });
-      await notifyProofStatus(proof.userId, proofId, 'APPROVED');
+      await prisma.$transaction(async (tx) => {
+        await tx.proof.update({ where: { id: proofId }, data: { status: 'APPROVED' } });
+        await tx.verification.create({
+          data: {
+            proofId,
+            verifierId: 'auto-verifier',
+            verdict: result.verdict,
+            notes: result.notes || `confidence: ${result.confidence}`,
+          },
+        });
+        await notifyProofStatus(proof.userId, proofId, 'APPROVED', tx);
+      });
 
       const completed = await completeTaskIfFull(proof.taskId);
       if (completed) {
@@ -65,8 +80,18 @@ const worker = new Worker(
 
       await enqueueRewardPayout(proofId);
     } else if (result.verdict === 'rejected') {
-      await prisma.proof.update({ where: { id: proofId }, data: { status: 'REJECTED' } });
-      await notifyProofStatus(proof.userId, proofId, 'REJECTED');
+      await prisma.$transaction(async (tx) => {
+        await tx.proof.update({ where: { id: proofId }, data: { status: 'REJECTED' } });
+        await tx.verification.create({
+          data: {
+            proofId,
+            verifierId: 'auto-verifier',
+            verdict: result.verdict,
+            notes: result.notes || `confidence: ${result.confidence}`,
+          },
+        });
+        await notifyProofStatus(proof.userId, proofId, 'REJECTED', tx);
+      });
     } else {
       const assigned = await assignValidators(proofId);
       if (assigned > 0) {
@@ -76,16 +101,16 @@ const worker = new Worker(
           proofId,
         });
       }
-    }
 
-    await prisma.verification.create({
-      data: {
-        proofId,
-        verifierId: 'auto-verifier',
-        verdict: result.verdict,
-        notes: result.notes || `confidence: ${result.confidence}`,
-      },
-    });
+      await prisma.verification.create({
+        data: {
+          proofId,
+          verifierId: 'auto-verifier',
+          verdict: result.verdict,
+          notes: result.notes || `confidence: ${result.confidence}`,
+        },
+      });
+    }
   },
   { connection },
 );

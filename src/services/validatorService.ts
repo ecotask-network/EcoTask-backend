@@ -165,44 +165,51 @@ async function finalizeProof(
   const agreement = submitted.filter((v) => v.verdict === verdict);
   const disagreement = submitted.filter((v) => v.verdict !== verdict);
 
-  await prisma.$transaction([
-    prisma.proof.update({ where: { id: proofId }, data: { status } }),
-    prisma.verification.create({
+  // The proof status update, the Verification record, the validator
+  // reputation adjustments, and the notification (+ its outbox row) are all
+  // committed in one interactive transaction. A crash after this commits but
+  // before/during the (out-of-band) notify step is no longer possible,
+  // because the notification is created here, inside the same transaction.
+  const proof = await prisma.$transaction(async (tx) => {
+    await tx.proof.update({ where: { id: proofId }, data: { status } });
+    await tx.verification.create({
       data: {
         proofId,
         verifierId: AUTO_VERIFIER_ID,
         verdict,
         notes: `quorum of ${agreement.length} validators`,
       },
-    }),
-    ...agreement.map((v) =>
-      prisma.user.update({
+    });
+
+    for (const v of agreement) {
+      await tx.user.update({
         where: { id: v.validatorId },
         data: { validatorReputation: { increment: 1 } },
-      }),
-    ),
-    ...disagreement.map((v) =>
-      prisma.user.update({
+      });
+    }
+    for (const v of disagreement) {
+      await tx.user.update({
         where: { id: v.validatorId },
         data: { validatorReputation: { decrement: 1 } },
-      }),
-    ),
-  ]);
-
-  const proof = await prisma.proof.findUnique({
-    where: { id: proofId },
-    select: { userId: true, taskId: true },
-  });
-  if (proof) {
-    await notifyProofStatus(proof.userId, proofId, status);
-
-    if (status === 'APPROVED') {
-      const completed = await completeTaskIfFull(proof.taskId);
-      if (completed) {
-        logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
-      }
-      await enqueueRewardPayout(proofId);
+      });
     }
+
+    const proofRecord = await tx.proof.findUnique({
+      where: { id: proofId },
+      select: { userId: true, taskId: true },
+    });
+    if (proofRecord) {
+      await notifyProofStatus(proofRecord.userId, proofId, status, tx);
+    }
+    return proofRecord;
+  });
+
+  if (proof && status === 'APPROVED') {
+    const completed = await completeTaskIfFull(proof.taskId);
+    if (completed) {
+      logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
+    }
+    await enqueueRewardPayout(proofId);
   }
 
   logger.info('Quorum reached, proof finalized', { proofId, status });
