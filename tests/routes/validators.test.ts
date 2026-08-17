@@ -222,6 +222,7 @@ describe('Validator Routes', () => {
         'v-id',
         'approved',
         'matches task location',
+        res.headers['x-request-id'],
       );
     });
 

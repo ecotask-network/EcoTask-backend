@@ -9,12 +9,19 @@ export interface NotificationInput {
   body?: string;
 }
 
-export async function createNotification(input: NotificationInput): Promise<void> {
+export async function createNotification(
+  input: NotificationInput,
+  requestId?: string,
+): Promise<void> {
   try {
     const notification = await prisma.notification.create({ data: input });
-    await enqueueNotificationDispatch(notification.id);
+    await enqueueNotificationDispatch(notification.id, requestId);
   } catch (err) {
-    logger.error('Failed to persist notification', { err, ...input });
+    logger.error('Failed to persist notification', {
+      err,
+      ...input,
+      ...(requestId ? { requestId } : {}),
+    });
   }
 }
 
@@ -22,15 +29,24 @@ export async function notifyProofStatus(
   userId: string,
   proofId: string,
   status: string,
+  requestId?: string,
 ): Promise<void> {
   const isApproved = status === 'APPROVED';
-  await createNotification({
+  await createNotification(
+    {
+      userId,
+      type: isApproved ? 'proof.approved' : 'proof.rejected',
+      title: isApproved ? 'Proof approved' : 'Proof rejected',
+      body: isApproved
+        ? 'Your proof was approved and your reward is on its way to your wallet.'
+        : 'Your proof was rejected. Please review the notes and submit a new proof.',
+    },
+    requestId,
+  );
+  logger.info('Sending proof status notification', {
     userId,
-    type: isApproved ? 'proof.approved' : 'proof.rejected',
-    title: isApproved ? 'Proof approved' : 'Proof rejected',
-    body: isApproved
-      ? 'Your proof was approved and your reward is on its way to your wallet.'
-      : 'Your proof was rejected. Please review the notes and submit a new proof.',
+    proofId,
+    status,
+    ...(requestId ? { requestId } : {}),
   });
-  logger.info('Sending proof status notification', { userId, proofId, status });
 }

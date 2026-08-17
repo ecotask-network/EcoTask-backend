@@ -70,7 +70,7 @@ const mockPrisma = prisma as unknown as {
 
 const processor = (Worker as unknown as jest.Mock).mock.calls[0][1] as (job: {
   id: string;
-  data: { proofId: string };
+  data: { proofId: string; requestId?: string };
 }) => Promise<void>;
 
 describe('Verification Worker', () => {
@@ -95,13 +95,28 @@ describe('Verification Worker', () => {
     );
   });
 
+  it('stores the originating request ID in the verification job', async () => {
+    const addSpy = (verificationQueue as unknown as { add: jest.Mock }).add;
+
+    await enqueueVerification('proof-1', 'request-1');
+
+    expect(addSpy).toHaveBeenCalledWith(
+      'verify',
+      { proofId: 'proof-1', requestId: 'request-1' },
+      expect.objectContaining({ attempts: 3 }),
+    );
+  });
+
   it('skips proofs that have already reached a final state', async () => {
     mockPrisma.proof.findUnique.mockResolvedValue({
       userId: 'user-1',
       status: 'APPROVED',
     });
 
-    await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
+    await processor({
+      id: 'job-1',
+      data: { proofId: 'proof-1', requestId: 'request-1' },
+    });
 
     expect(mockPrisma.proof.update).not.toHaveBeenCalled();
   });
@@ -146,15 +161,36 @@ describe('Verification Worker', () => {
     ) as {
       enqueueRewardPayout: jest.Mock;
     };
+    const { notifyProofStatus } = jest.requireMock(
+      '../../src/services/notificationService',
+    ) as {
+      notifyProofStatus: jest.Mock;
+    };
+    const mockedLogger = jest.requireMock('../../src/utils/logger').default as {
+      info: jest.Mock;
+    };
 
-    await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
+    await processor({
+      id: 'job-1',
+      data: { proofId: 'proof-1', requestId: 'request-1' },
+    });
 
     expect(mockPrisma.proof.update).toHaveBeenCalledWith({
       where: { id: 'proof-1' },
       data: { status: 'APPROVED' },
     });
     expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
-    expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1');
+    expect(notifyProofStatus).toHaveBeenCalledWith(
+      'user-1',
+      'proof-1',
+      'APPROVED',
+      'request-1',
+    );
+    expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1', 'request-1');
+    expect(mockedLogger.info).toHaveBeenCalledWith('Processing proof verification', {
+      proofId: 'proof-1',
+      requestId: 'request-1',
+    });
   });
 
   it('assigns inconclusive proofs to community validators', async () => {

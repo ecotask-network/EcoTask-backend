@@ -194,6 +194,7 @@ npm run dev
 PORT=3000
 NODE_ENV=development
 CORS_ORIGIN=*
+LOG_LEVEL=info
 
 # Database
 DATABASE_URL=postgresql://user:password@localhost:5432/ecotask

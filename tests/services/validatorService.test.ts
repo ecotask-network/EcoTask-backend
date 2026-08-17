@@ -218,16 +218,21 @@ describe('ValidatorService', () => {
         enqueueRewardPayout: jest.Mock;
       };
 
-      const outcome = await castVote('proof-1', 'v1', 'approved');
+      const outcome = await castVote('proof-1', 'v1', 'approved', undefined, 'request-1');
 
       expect(outcome).toEqual({ finalized: true, status: 'APPROVED' });
       expect(mockPrisma.proof.update).toHaveBeenCalledWith({
         where: { id: 'proof-1' },
         data: { status: 'APPROVED' },
       });
-      expect(notifyProofStatus).toHaveBeenCalledWith('owner-1', 'proof-1', 'APPROVED');
+      expect(notifyProofStatus).toHaveBeenCalledWith(
+        'owner-1',
+        'proof-1',
+        'APPROVED',
+        'request-1',
+      );
       expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
-      expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1');
+      expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1', 'request-1');
     });
 
     it('rewards agreeing validators reputation and penalizes dissenters', async () => {

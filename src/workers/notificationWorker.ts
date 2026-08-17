@@ -3,16 +3,22 @@ import IORedis from 'ioredis';
 import config from '../config/default';
 import { dispatchNotification } from '../services/notificationDispatchService';
 import logger from '../utils/logger';
+import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
 // Connections are created lazily so importing this module never opens a
 // socket; it only connects once a dispatch is enqueued or the worker starts.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let connection: any = null;
-let queue: Queue | null = null;
-let worker: Worker | null = null;
+let queue: Queue<NotificationJobData> | null = null;
+let worker: Worker<NotificationJobData> | null = null;
 const queueName = QUEUE_NAMES.notificationDispatch;
 const retentionOptions = getQueueRetentionOptions(queueName);
+
+interface NotificationJobData {
+  notificationId: string;
+  requestId?: string;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getConnection(): any {
@@ -26,9 +32,9 @@ function getConnection(): any {
   return connection;
 }
 
-export function getNotificationQueue(): Queue {
+export function getNotificationQueue(): Queue<NotificationJobData> {
   if (!queue) {
-    queue = new Queue(queueName, {
+    queue = new Queue<NotificationJobData>(queueName, {
       connection: getConnection(),
       defaultJobOptions: retentionOptions,
     });
@@ -36,11 +42,18 @@ export function getNotificationQueue(): Queue {
   return queue;
 }
 
-export async function enqueueNotificationDispatch(notificationId: string): Promise<void> {
+export async function enqueueNotificationDispatch(
+  notificationId: string,
+  requestId?: string,
+): Promise<void> {
+  const resolvedRequestId = requestId ?? getRequestId();
   try {
     await getNotificationQueue().add(
       'dispatch',
-      { notificationId },
+      {
+        notificationId,
+        ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+      },
       {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
@@ -48,27 +61,43 @@ export async function enqueueNotificationDispatch(notificationId: string): Promi
       },
     );
   } catch (err) {
-    logger.error('Failed to enqueue notification dispatch', { notificationId, err });
+    logger.error('Failed to enqueue notification dispatch', {
+      notificationId,
+      ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+      err,
+    });
   }
 }
 
 export function startNotificationWorker(): void {
   if (worker) return;
-  worker = new Worker(
+  worker = new Worker<NotificationJobData>(
     queueName,
     async (job) => {
-      const { notificationId } = job.data;
-      logger.info('Dispatching notification', { notificationId });
-      await dispatchNotification(notificationId);
+      const { notificationId, requestId } = job.data;
+      return runWithRequestContext(requestId, async () => {
+        logger.info('Dispatching notification', {
+          notificationId,
+          ...(requestId ? { requestId } : {}),
+        });
+        await dispatchNotification(notificationId);
+      });
     },
     { connection: getConnection() },
   );
 
   worker.on('completed', (job) =>
-    logger.info('Notification dispatch completed', { jobId: job.id }),
+    logger.info('Notification dispatch completed', {
+      jobId: job.id,
+      ...(job.data.requestId ? { requestId: job.data.requestId } : {}),
+    }),
   );
   worker.on('failed', (job, err) =>
-    logger.error('Notification dispatch failed', { jobId: job?.id, err }),
+    logger.error('Notification dispatch failed', {
+      jobId: job?.id,
+      ...(job?.data?.requestId ? { requestId: job.data.requestId } : {}),
+      err,
+    }),
   );
 }
 

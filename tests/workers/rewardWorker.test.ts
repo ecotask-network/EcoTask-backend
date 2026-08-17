@@ -49,7 +49,10 @@ const mockPrisma = prisma as unknown as {
 };
 const mockSubmitReward = submitReward as jest.Mock;
 
-let processor: (job: { id: string; data: { proofId: string } }) => Promise<void>;
+let processor: (job: {
+  id: string;
+  data: { proofId: string; requestId?: string };
+}) => Promise<void>;
 
 beforeAll(() => {
   startRewardWorker();
@@ -74,7 +77,7 @@ describe('Reward Worker', () => {
   });
 
   it('retains completed and failed payout jobs', async () => {
-    await enqueueRewardPayout('proof-1');
+    await enqueueRewardPayout('proof-1', 'request-1');
 
     const queue = (Queue as unknown as jest.Mock).mock.results[0].value as {
       add: jest.Mock;
@@ -82,7 +85,7 @@ describe('Reward Worker', () => {
 
     expect(queue.add).toHaveBeenCalledWith(
       'payout',
-      { proofId: 'proof-1' },
+      { proofId: 'proof-1', requestId: 'request-1' },
       {
         removeOnComplete: { count: 1000 },
         removeOnFail: { age: 604800 },
@@ -116,7 +119,10 @@ describe('Reward Worker', () => {
     mockSubmitReward.mockResolvedValue('tx-hash-1');
     mockPrisma.proof.update.mockResolvedValue({});
 
-    await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
+    await processor({
+      id: 'job-1',
+      data: { proofId: 'proof-1', requestId: 'request-1' },
+    });
 
     expect(mockSubmitReward).toHaveBeenCalledWith({
       userWallet: 'GC...',
@@ -127,5 +133,12 @@ describe('Reward Worker', () => {
     expect(mockPrisma.proof.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { rewardedAt: expect.any(Date) } }),
     );
+    const mockedLogger = jest.requireMock('../../src/utils/logger').default as {
+      info: jest.Mock;
+    };
+    expect(mockedLogger.info).toHaveBeenCalledWith('Processing reward payout', {
+      proofId: 'proof-1',
+      requestId: 'request-1',
+    });
   });
 });
