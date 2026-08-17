@@ -153,8 +153,14 @@ model AuditLog {
   resourceId String?
   details    Json     @default("{}")
   ip         String?
+  outcome    String?  // "SUCCESS" | "FAILURE"
+  statusCode Int?
+  durationMs Int?
   createdAt  DateTime @default(now())
 
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([resource, createdAt(sort: Desc)])
   @@map("AuditLog")
 }
 

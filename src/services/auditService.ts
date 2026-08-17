@@ -1,6 +1,8 @@
 import prisma from '../utils/prisma.js';
 import logger from '../utils/logger.js';
 
+export type AuditOutcome = 'SUCCESS' | 'FAILURE';
+
 export interface AuditLogEntry {
   userId?: string;
   action: string;
@@ -8,18 +10,115 @@ export interface AuditLogEntry {
   resourceId?: string;
   details?: Record<string, unknown>;
   ip?: string;
+  outcome?: AuditOutcome;
+  statusCode?: number;
+  durationMs?: number;
 }
 
-export async function logAudit(entry: AuditLogEntry): Promise<void> {
-  try {
-    await prisma.$executeRaw`
-      INSERT INTO "AuditLog" (id, "userId", action, resource, "resourceId", details, ip, "createdAt")
-      VALUES (gen_random_uuid(), ${entry.userId || null}, ${entry.action}, ${entry.resource}, ${entry.resourceId || null}, ${JSON.stringify(entry.details || {})}::jsonb, ${entry.ip || null}, NOW())
-    `;
-  } catch (err) {
-    logger.error('Failed to write audit log', { err, auditEntry: entry });
+// ---------------------------------------------------------------------------
+// Write-through queue with retry
+//
+// The queue is an in-process array that is drained by setImmediate after each
+// enqueue. Each entry is attempted up to MAX_ATTEMPTS times with exponential
+// back-off. On final exhaustion a logger.error alert is raised so the failure
+// is never silently dropped.
+// ---------------------------------------------------------------------------
+
+const MAX_ATTEMPTS = 3;
+const BASE_DELAY_MS = 100;
+
+interface QueueItem {
+  entry: AuditLogEntry;
+  attempts: number;
+}
+
+const queue: QueueItem[] = [];
+let draining = false;
+
+function scheduleFlush(): void {
+  if (!draining) {
+    draining = true;
+    setImmediate(drainQueue);
   }
 }
+
+async function drainQueue(): Promise<void> {
+  // Snapshot current items so new enqueues during a slow drain start a fresh
+  // cycle after this one finishes, rather than causing unbounded loops.
+  const batch = queue.splice(0, queue.length);
+  draining = false;
+
+  for (const item of batch) {
+    await writeWithRetry(item);
+  }
+}
+
+async function writeWithRetry(item: QueueItem): Promise<void> {
+  item.attempts += 1;
+
+  try {
+    await prisma.$executeRaw`
+      INSERT INTO "AuditLog" (
+        id, "userId", action, resource, "resourceId", details, ip,
+        outcome, "statusCode", "durationMs", "createdAt"
+      ) VALUES (
+        gen_random_uuid(),
+        ${item.entry.userId ?? null},
+        ${item.entry.action},
+        ${item.entry.resource},
+        ${item.entry.resourceId ?? null},
+        ${JSON.stringify(item.entry.details ?? {})}::jsonb,
+        ${item.entry.ip ?? null},
+        ${item.entry.outcome ?? null},
+        ${item.entry.statusCode ?? null},
+        ${item.entry.durationMs ?? null},
+        NOW()
+      )
+    `;
+  } catch (err) {
+    if (item.attempts < MAX_ATTEMPTS) {
+      const delayMs = BASE_DELAY_MS * 2 ** (item.attempts - 1);
+      logger.warn('Audit write failed, will retry', {
+        attempt: item.attempts,
+        maxAttempts: MAX_ATTEMPTS,
+        retryAfterMs: delayMs,
+        action: item.entry.action,
+        err,
+      });
+      await sleep(delayMs);
+      return writeWithRetry(item);
+    }
+
+    // All retries exhausted — raise a visible alert. Never drop silently.
+    logger.error('Audit write permanently failed after max retries — audit record lost', {
+      attempts: item.attempts,
+      action: item.entry.action,
+      resource: item.entry.resource,
+      resourceId: item.entry.resourceId,
+      userId: item.entry.userId,
+      outcome: item.entry.outcome,
+      err,
+    });
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Enqueue an audit log entry. The write happens asynchronously via the
+ * internal queue but is never fire-and-forget: failures are retried and
+ * ultimately alert via logger.error rather than being swallowed.
+ */
+export function logAudit(entry: AuditLogEntry): void {
+  queue.push({ entry, attempts: 0 });
+  scheduleFlush();
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers (used by the admin audit route)
+// ---------------------------------------------------------------------------
 
 export async function getAuditLogs(params: {
   userId?: string;
@@ -46,8 +145,8 @@ export async function getAuditLogs(params: {
   }
 
   const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-  const limit = params.limit || 50;
-  const offset = params.offset || 0;
+  const limit = params.limit ?? 50;
+  const offset = params.offset ?? 0;
 
   const query = `SELECT * FROM "AuditLog" ${whereClause} ORDER BY "createdAt" DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
   const countQuery = `SELECT COUNT(*) FROM "AuditLog" ${whereClause}`;
@@ -60,7 +159,7 @@ export async function getAuditLogs(params: {
   return {
     data: logs,
     meta: {
-      total: Number((countResult as Array<{ count: bigint }>)[0]?.count || 0),
+      total: Number((countResult as Array<{ count: bigint }>)[0]?.count ?? 0),
       limit,
       offset,
     },
