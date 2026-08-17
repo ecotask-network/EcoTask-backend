@@ -5,6 +5,7 @@ import {
   updateTaskSchema,
   listTasksQuerySchema,
 } from '../utils/validation.js';
+import { InvalidCursorError } from '../utils/cursor.js';
 
 export async function listTasks(req: Request, res: Response) {
   const parsed = listTasksQuerySchema.safeParse(req.query);
@@ -23,8 +24,15 @@ export async function listTasks(req: Request, res: Response) {
     neLng,
   };
 
-  const { items, nextCursor } = await taskModel.listTasks(filters);
-  return res.json({ data: items, nextCursor });
+  try {
+    const { items, nextCursor } = await taskModel.listTasks(filters);
+    return res.json({ data: items, nextCursor });
+  } catch (err) {
+    if (err instanceof InvalidCursorError) {
+      return res.status(400).json({ error: 'invalid cursor' });
+    }
+    throw err;
+  }
 }
 
 export async function getTask(req: Request, res: Response) {

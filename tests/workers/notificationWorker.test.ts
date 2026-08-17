@@ -75,7 +75,12 @@ describe('Notification Dispatch Worker', () => {
     expect(addSpy).toHaveBeenCalledWith(
       'dispatch',
       { notificationId: 'n-2' },
-      expect.objectContaining({ attempts: 3 }),
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 1000 },
+        removeOnFail: { age: 604800 },
+      },
     );
   });
 
