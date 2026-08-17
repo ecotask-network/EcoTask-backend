@@ -1,6 +1,10 @@
+import { resolveJwtSecret } from './jwtSecret.js';
+
+const nodeEnv = process.env.NODE_ENV || 'development';
+
 export default {
   port: parseInt(process.env.PORT || '3000'),
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   corsOrigin: process.env.CORS_ORIGIN || '*',
   database: {
     url:
@@ -36,7 +40,7 @@ export default {
     quorumRequired: parseInt(process.env.VALIDATOR_QUORUM_REQUIRED || '2', 10),
   },
   jwt: {
-    secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    secret: resolveJwtSecret(nodeEnv, process.env.JWT_SECRET),
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     issuer: process.env.JWT_ISSUER || 'ecotask-backend',
     audience: process.env.JWT_AUDIENCE || 'ecotask-users',

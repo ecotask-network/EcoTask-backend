@@ -231,6 +231,10 @@ VALIDATOR_ASSIGNMENT_COUNT=3
 VALIDATOR_QUORUM_REQUIRED=2
 ```
 
+Production startup rejects missing JWT secrets and all development or
+documentation placeholders stored in this repository. This denial list does not
+measure secret strength; generate a fresh random secret for every deployment.
+
 ---
 
 ## 📡 API Overview
