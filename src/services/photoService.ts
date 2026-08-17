@@ -94,25 +94,47 @@ function parseExifGps(tags: ExifReader.Tags): {
   }
 }
 
+// The EXIF APP1 marker segment's length field is 16-bit, capping any single
+// EXIF block at 65533 bytes per the Exif/JEITA spec — real camera metadata
+// (DateTimeOriginal, GPS tags, etc.) always lives within that segment, near
+// the start of the file, regardless of overall file size. `ExifReader.load`
+// has no such bound built in: given the *entire* file buffer, it linearly
+// scans looking for markers, and on data that never resolves into a
+// recognized structure (e.g. a non-image upload) that scan runs the full
+// buffer length — measured at ~15-18ms of uninterruptible synchronous CPU
+// time on a 10MB buffer, long enough to starve the event loop of a chance to
+// service any other in-flight request. Capping the slice we hand to
+// ExifReader to a generous multiple of the spec max bounds that worst case
+// to sub-millisecond, with no effect on real photos (whose EXIF segment is
+// always well inside this window).
+const MAX_EXIF_SCAN_BYTES = 128 * 1024;
+
 export async function extractPhotoMetadata(filePath: string): Promise<PhotoMetadata> {
   try {
     // NOTE on the non-blocking tradeoff: `exifreader` and `image-size` are
     // both synchronous, in-memory-buffer APIs — decoding EXIF tags and
     // image headers is unavoidably a synchronous CPU-bound step with these
     // libraries, short of rewriting their internals (out of scope here).
-    // What we *can* fix is the file I/O feeding that buffer: `fs.readFileSync`
+    // What we *can* fix is (a) the file I/O feeding that buffer — `fs.readFileSync`
     // blocks the event loop for the full disk-read duration on top of the
-    // decode; `fs.promises.readFile` performs the read asynchronously via
+    // decode, while `fs.promises.readFile` performs the read asynchronously via
     // libuv's thread pool and only resumes this function (and runs the sync
-    // decode below) on a subsequent event-loop tick. So this is a partial
-    // fix — non-blocking I/O plus, when called concurrently for multiple
-    // files (see proofController), the sync decode work for each file gets
-    // interleaved across event-loop ticks instead of one file's read+decode
-    // fully blocking before the next file's read even starts.
+    // decode below) on a subsequent event-loop tick — and (b) bounding how
+    // much data the synchronous decode itself has to churn through (see
+    // `MAX_EXIF_SCAN_BYTES` above). So this is a partial fix — non-blocking
+    // I/O plus a bounded worst-case decode, plus, when called concurrently
+    // for multiple files (see proofController), the (now much shorter) sync
+    // decode work for each file gets interleaved across event-loop ticks
+    // instead of one file's read+decode fully blocking before the next
+    // file's read even starts.
     const buffer = await fs.promises.readFile(filePath);
     // Decode real dimensions from image headers — never trust EXIF for this.
     const { width, height } = decodeActualDimensions(buffer);
-    const tags = ExifReader.load(buffer);
+    const exifSource =
+      buffer.length > MAX_EXIF_SCAN_BYTES
+        ? buffer.subarray(0, MAX_EXIF_SCAN_BYTES)
+        : buffer;
+    const tags = ExifReader.load(exifSource);
     return {
       width,
       height,
