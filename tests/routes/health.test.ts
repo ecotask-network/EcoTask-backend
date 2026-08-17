@@ -1,6 +1,6 @@
 import request from 'supertest';
-import app from '../../src/app';
-import { registerWorker, unregisterWorker } from '../../src/utils/workerHealth';
+import app from '../../src/app.js';
+import { registerWorker, unregisterWorker } from '../../src/utils/workerHealth.js';
 
 describe('Health Endpoints', () => {
   describe('GET /health', () => {

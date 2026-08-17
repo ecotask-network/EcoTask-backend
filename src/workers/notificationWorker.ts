@@ -3,7 +3,7 @@ import IORedis from 'ioredis';
 import config from '../config/default';
 import { dispatchNotification } from '../services/notificationDispatchService';
 import logger from '../utils/logger';
-import { registerWorker, unregisterWorker } from '../utils/workerHealth';
+import { registerWorker, unregisterWorker } from '../utils/workerHealth.js';
 
 // Connections are created lazily so importing this module never opens a
 // socket; it only connects once a dispatch is enqueued or the worker starts.

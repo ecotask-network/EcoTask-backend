@@ -4,7 +4,7 @@ import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
-import { registerWorker, unregisterWorker } from '../utils/workerHealth';
+import { registerWorker, unregisterWorker } from '../utils/workerHealth.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let connection: any = null;
