@@ -16,6 +16,7 @@ import { enqueueVerification } from '../workers/verificationWorker.js';
 import { enqueueRewardPayout } from '../workers/rewardWorker.js';
 import { completeTaskIfFull } from '../models/task.js';
 import logger from '../utils/logger.js';
+import { UserRole } from '@prisma/client';
 
 export async function submitProof(req: Request, res: Response) {
   const parsed = submitProofSchema.safeParse(req.body);
@@ -110,16 +111,19 @@ export async function submitProof(req: Request, res: Response) {
     );
     if (!photoWithinRadius) {
       gpsMismatch = true;
-      logger.warn('GPS mismatch: body coordinates supplied but photo EXIF GPS is outside task radius', {
-        proofId: proof.id,
-        bodyLat,
-        bodyLng,
-        photoLat: gpsFromPhoto.lat,
-        photoLng: gpsFromPhoto.lng,
-        taskLat: task.lat,
-        taskLng: task.lng,
-        radiusMeters: task.radiusMeters,
-      });
+      logger.warn(
+        'GPS mismatch: body coordinates supplied but photo EXIF GPS is outside task radius',
+        {
+          proofId: proof.id,
+          bodyLat,
+          bodyLng,
+          photoLat: gpsFromPhoto.lat,
+          photoLng: gpsFromPhoto.lng,
+          taskLat: task.lat,
+          taskLng: task.lng,
+          radiusMeters: task.radiusMeters,
+        },
+      );
     }
   }
 
@@ -179,7 +183,7 @@ async function isAdmin(userId: string): Promise<boolean> {
     where: { id: userId },
     select: { role: true },
   });
-  return user?.role === 'admin';
+  return user?.role === UserRole.ADMIN;
 }
 
 export async function listPendingProofs(req: Request, res: Response) {

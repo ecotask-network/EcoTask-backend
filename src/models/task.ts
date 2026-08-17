@@ -1,8 +1,9 @@
 import prisma from '../utils/prisma.js';
+import { TaskStatus } from '@prisma/client';
 
 export interface TaskFilters {
   type?: string;
-  status?: string;
+  status?: TaskStatus;
   minReward?: number;
   maxReward?: number;
   swLat?: number;
@@ -85,7 +86,7 @@ export async function updateTask(
     lng?: number;
     radiusMeters?: number;
     maxCompletions?: number;
-    status?: string;
+    status?: TaskStatus;
     expiresAt?: Date;
   },
 ) {
@@ -105,14 +106,15 @@ export async function completeTaskIfFull(taskId: string): Promise<boolean> {
     where: { id: taskId },
     select: { id: true, status: true, maxCompletions: true },
   });
-  if (!task || task.maxCompletions == null || task.status !== 'ACTIVE') return false;
+  if (!task || task.maxCompletions == null || task.status !== TaskStatus.ACTIVE)
+    return false;
 
   const completed = await getTaskCompletionCount(taskId);
   if (completed < task.maxCompletions) return false;
 
   await prisma.task.update({
     where: { id: taskId },
-    data: { status: 'COMPLETED' },
+    data: { status: TaskStatus.COMPLETED },
   });
   return true;
 }

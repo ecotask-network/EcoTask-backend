@@ -81,7 +81,7 @@ describe('Validator Routes', () => {
     });
 
     it('forbids non-admin users', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'USER' });
       const res = await request(app)
         .get('/validators')
         .set('Authorization', `Bearer ${token('user-id', 'GUSER')}`);
@@ -89,7 +89,7 @@ describe('Validator Routes', () => {
     });
 
     it('lists validators with their reputation', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
       mockPrisma.user.findMany.mockResolvedValue([
         {
           id: 'v1',
@@ -110,23 +110,23 @@ describe('Validator Routes', () => {
 
   describe('POST /validators/:userId/activate', () => {
     it('promotes a user to validator', async () => {
-      mockPrisma.user.findUnique.mockResolvedValueOnce({ role: 'admin' });
-      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'u-1', role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'u-1', role: 'USER' });
       mockPrisma.user.update.mockResolvedValue({
         id: 'u-1',
         wallet: 'GU',
-        role: 'validator',
+        role: 'VALIDATOR',
       });
       const res = await request(app)
         .post('/validators/u-1/activate')
         .set('Authorization', `Bearer ${token('admin-id', 'GADMIN')}`)
         .send({});
       expect(res.status).toBe(200);
-      expect(res.body.role).toBe('validator');
+      expect(res.body.role).toBe('VALIDATOR');
     });
 
     it('returns 404 for a missing user', async () => {
-      mockPrisma.user.findUnique.mockResolvedValueOnce({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
       mockPrisma.user.findUnique.mockResolvedValueOnce(null);
       const res = await request(app)
         .post('/validators/missing/activate')
@@ -138,19 +138,19 @@ describe('Validator Routes', () => {
 
   describe('POST /validators/:userId/deactivate', () => {
     it('demotes a validator back to user', async () => {
-      mockPrisma.user.findUnique.mockResolvedValueOnce({ role: 'admin' });
-      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'u-1', role: 'validator' });
-      mockPrisma.user.update.mockResolvedValue({ id: 'u-1', wallet: 'GU', role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'u-1', role: 'VALIDATOR' });
+      mockPrisma.user.update.mockResolvedValue({ id: 'u-1', wallet: 'GU', role: 'USER' });
       const res = await request(app)
         .post('/validators/u-1/deactivate')
         .set('Authorization', `Bearer ${token('admin-id', 'GADMIN')}`)
         .send({});
       expect(res.status).toBe(200);
-      expect(res.body.role).toBe('user');
+      expect(res.body.role).toBe('USER');
     });
 
     it('refuses to demote an admin', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u-1', role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u-1', role: 'ADMIN' });
       const res = await request(app)
         .post('/validators/u-1/deactivate')
         .set('Authorization', `Bearer ${token('admin-id', 'GADMIN')}`)
@@ -161,7 +161,7 @@ describe('Validator Routes', () => {
 
   describe('GET /validator/reviews', () => {
     it('requires validator role', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'USER' });
       const res = await request(app)
         .get('/validator/reviews')
         .set('Authorization', `Bearer ${token('user-id', 'GUSER')}`);
@@ -169,7 +169,7 @@ describe('Validator Routes', () => {
     });
 
     it('returns the pending reviews assigned to the validator', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'validator' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'VALIDATOR' });
       const { listPendingReviews } = jest.requireMock(
         '../../src/services/validatorService',
       ) as { listPendingReviews: jest.Mock };
@@ -186,7 +186,7 @@ describe('Validator Routes', () => {
 
   describe('POST /validator/reviews/:proofId', () => {
     it('requires validator role', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'USER' });
       const res = await request(app)
         .post('/validator/reviews/proof-1')
         .set('Authorization', `Bearer ${token('user-id', 'GUSER')}`)
@@ -195,7 +195,7 @@ describe('Validator Routes', () => {
     });
 
     it('returns 400 for an invalid verdict', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'validator' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'VALIDATOR' });
       const res = await request(app)
         .post('/validator/reviews/proof-1')
         .set('Authorization', `Bearer ${token('v-id', 'GVAL')}`)
@@ -204,7 +204,7 @@ describe('Validator Routes', () => {
     });
 
     it('casts the vote and returns the quorum outcome', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'validator' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'VALIDATOR' });
       const { castVote } = jest.requireMock('../../src/services/validatorService') as {
         castVote: jest.Mock;
       };
@@ -226,7 +226,7 @@ describe('Validator Routes', () => {
     });
 
     it('returns 409 when the vote was already cast', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'validator' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'VALIDATOR' });
       const { castVote } = jest.requireMock('../../src/services/validatorService') as {
         castVote: jest.Mock;
       };
@@ -240,7 +240,7 @@ describe('Validator Routes', () => {
     });
 
     it('returns 404 when the validator has no assignment', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'validator' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'VALIDATOR' });
       const { castVote } = jest.requireMock('../../src/services/validatorService') as {
         castVote: jest.Mock;
       };

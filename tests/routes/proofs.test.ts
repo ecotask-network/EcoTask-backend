@@ -179,7 +179,7 @@ describe('Proof Routes', () => {
         photos: [],
         verifications: [],
       });
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'USER' });
       const res = await request(app)
         .get('/proofs/proof-1')
         .set('Authorization', `Bearer ${userToken()}`);
@@ -194,7 +194,7 @@ describe('Proof Routes', () => {
         photos: [],
         verifications: [],
       });
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
       const res = await request(app)
         .get('/proofs/proof-1')
         .set('Authorization', `Bearer ${userToken()}`);
@@ -302,7 +302,7 @@ describe('Proof Routes', () => {
     });
 
     it('forbids non-admin users', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'USER' });
       const res = await request(app)
         .get('/proofs/review')
         .set('Authorization', `Bearer ${userToken()}`);
@@ -310,7 +310,7 @@ describe('Proof Routes', () => {
     });
 
     it('lists pending proofs for admins', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
       mockPrisma.proof.findMany.mockResolvedValue([
         { id: 'proof-1', status: 'VERIFYING', photos: [], user: {}, task: {} },
       ]);
@@ -342,7 +342,7 @@ describe('Proof Routes', () => {
       );
 
     it('forbids non-admin users', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'user' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'USER' });
       const res = await request(app)
         .post('/proofs/proof-1/review')
         .set('Authorization', `Bearer ${userToken()}`)
@@ -351,7 +351,7 @@ describe('Proof Routes', () => {
     });
 
     it('returns 404 for a missing proof', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
       mockPrisma.proof.findUnique.mockResolvedValue(null);
       const res = await request(app)
         .post('/proofs/proof-missing/review')
@@ -361,7 +361,7 @@ describe('Proof Routes', () => {
     });
 
     it('returns 409 for a proof already in a final state', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
       mockPrisma.proof.findUnique.mockResolvedValue({
         id: 'proof-1',
         userId: 'user-id',
@@ -376,7 +376,7 @@ describe('Proof Routes', () => {
     });
 
     it('rejects a proof and records the verification', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
         userId: 'user-id',
@@ -412,7 +412,7 @@ describe('Proof Routes', () => {
     });
 
     it('approves a proof, completes capacity and enqueues the payout', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
         userId: 'user-id',

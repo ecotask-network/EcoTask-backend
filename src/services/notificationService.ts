@@ -1,6 +1,7 @@
 import prisma from '../utils/prisma.js';
 import logger from '../utils/logger.js';
 import { enqueueNotificationDispatch } from '../workers/notificationWorker.js';
+import { ProofStatus } from '@prisma/client';
 
 export interface NotificationInput {
   userId: string;
@@ -21,9 +22,9 @@ export async function createNotification(input: NotificationInput): Promise<void
 export async function notifyProofStatus(
   userId: string,
   proofId: string,
-  status: string,
+  status: ProofStatus,
 ): Promise<void> {
-  const isApproved = status === 'APPROVED';
+  const isApproved = status === ProofStatus.APPROVED;
   await createNotification({
     userId,
     type: isApproved ? 'proof.approved' : 'proof.rejected',

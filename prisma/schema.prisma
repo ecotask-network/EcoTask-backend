@@ -14,13 +14,31 @@ enum ProofStatus {
   REJECTED
 }
 
+enum TaskStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+}
+
+enum ClaimStatus {
+  ACTIVE
+  RELEASED
+  EXPIRED
+}
+
+enum UserRole {
+  USER
+  VALIDATOR
+  ADMIN
+}
+
 model User {
   id        String   @id @default(uuid())
   wallet    String   @unique
   name      String?
   bio       String?
   avatarUrl String?  @map("avatar_url")
-  role      String   @default("user")
+  role      UserRole @default(USER)
   email     String?
   webhookUrl String? @map("webhook_url")
   validatorReputation Int @default(0) @map("validator_reputation")
@@ -45,7 +63,7 @@ model Task {
   lng       Float
   radiusMeters Float  @default(100) @map("radius_meters")
   maxCompletions Int?   @map("max_completions")
-  status    String   @default("ACTIVE")
+  status    TaskStatus @default(ACTIVE)
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
 
@@ -59,7 +77,7 @@ model TaskClaim {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
   taskId    String   @map("task_id")
-  status    String   @default("active")
+  status    ClaimStatus @default(ACTIVE)
   claimedAt DateTime @default(now()) @map("claimed_at")
   expiresAt DateTime @map("expires_at")
 
