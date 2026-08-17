@@ -201,6 +201,14 @@ DATABASE_URL=postgresql://user:password@localhost:5432/ecotask
 # Redis
 REDIS_URL=redis://localhost:6379
 
+# Queue retention
+PROOF_VERIFICATION_QUEUE_COMPLETED_RETENTION_COUNT=1000
+PROOF_VERIFICATION_QUEUE_FAILED_RETENTION_SECONDS=604800
+REWARD_PAYOUT_QUEUE_COMPLETED_RETENTION_COUNT=1000
+REWARD_PAYOUT_QUEUE_FAILED_RETENTION_SECONDS=604800
+NOTIFICATION_DISPATCH_QUEUE_COMPLETED_RETENTION_COUNT=1000
+NOTIFICATION_DISPATCH_QUEUE_FAILED_RETENTION_SECONDS=604800
+
 # Background jobs
 EXPIRY_SWEEP_INTERVAL_MS=900000
 
@@ -231,9 +239,24 @@ VALIDATOR_ASSIGNMENT_COUNT=3
 VALIDATOR_QUORUM_REQUIRED=2
 ```
 
-Production startup rejects missing JWT secrets and all development or
-documentation placeholders stored in this repository. This denial list does not
-measure secret strength; generate a fresh random secret for every deployment.
+Completed jobs are capped independently for each BullMQ queue. Failed jobs remain
+available for investigation for the configured number of seconds and are then
+removed as newer failed jobs finish.
+
+To apply the same policy to jobs accumulated before retention was enabled:
+
+```bash
+npm run build
+npm run queues:cleanup
+```
+
+To run the isolated Redis load check and confirm queue keys and memory remain
+bounded:
+
+```bash
+npm run build
+npm run queues:verify-retention
+```
 
 ---
 

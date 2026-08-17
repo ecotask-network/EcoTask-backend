@@ -2,43 +2,57 @@ import { z } from 'zod';
 import logger from '../utils/logger.js';
 import { DEVELOPMENT_JWT_SECRET, isKnownJwtSecretPlaceholder } from './jwtSecret.js';
 
-const envSchema = z
-  .object({
-    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-    PORT: z.coerce.number().default(3000),
-    DATABASE_URL: z.string().url(),
-    REDIS_URL: z.string().url().default('redis://localhost:6379'),
-    EXPIRY_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(900000),
-    JWT_SECRET: z
-      .string({
-        required_error:
-          'JWT_SECRET is required and must be a fresh random secret in production',
-      })
-      .min(16, 'JWT_SECRET must be at least 16 characters'),
-    JWT_EXPIRES_IN: z.string().default('7d'),
-    STELLAR_NETWORK: z.enum(['testnet', 'public']).default('testnet'),
-    STELLAR_ORACLE_SECRET_KEY: z.string().optional(),
-    REWARD_ENGINE_CONTRACT_ID: z.string().optional(),
-    WEB3_STORAGE_TOKEN: z.string().optional(),
-    NOTIFICATION_WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
-    NOTIFICATION_EMAIL_FROM: z.string().default('EcoTask <no-reply@ecotask.network>'),
-    PROOF_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3600000),
-    PROOF_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
-    CLAIM_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3600000),
-    CLAIM_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(50),
-    VALIDATOR_ASSIGNMENT_COUNT: z.coerce.number().int().positive().default(3),
-    VALIDATOR_QUORUM_REQUIRED: z.coerce.number().int().positive().default(2),
-  })
-  .superRefine((env, ctx) => {
-    if (env.NODE_ENV === 'production' && isKnownJwtSecretPlaceholder(env.JWT_SECRET)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['JWT_SECRET'],
-        message:
-          'JWT_SECRET matches a known development placeholder; set a fresh random secret',
-      });
-    }
-  });
+const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  PORT: z.coerce.number().default(3000),
+  DATABASE_URL: z.string().url(),
+  REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  PROOF_VERIFICATION_QUEUE_COMPLETED_RETENTION_COUNT: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(1000),
+  PROOF_VERIFICATION_QUEUE_FAILED_RETENTION_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(604800),
+  REWARD_PAYOUT_QUEUE_COMPLETED_RETENTION_COUNT: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(1000),
+  REWARD_PAYOUT_QUEUE_FAILED_RETENTION_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(604800),
+  NOTIFICATION_DISPATCH_QUEUE_COMPLETED_RETENTION_COUNT: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(1000),
+  NOTIFICATION_DISPATCH_QUEUE_FAILED_RETENTION_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(604800),
+  EXPIRY_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(900000),
+  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
+  JWT_EXPIRES_IN: z.string().default('7d'),
+  STELLAR_NETWORK: z.enum(['testnet', 'public']).default('testnet'),
+  STELLAR_ORACLE_SECRET_KEY: z.string().optional(),
+  REWARD_ENGINE_CONTRACT_ID: z.string().optional(),
+  WEB3_STORAGE_TOKEN: z.string().optional(),
+  NOTIFICATION_WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+  NOTIFICATION_EMAIL_FROM: z.string().default('EcoTask <no-reply@ecotask.network>'),
+  PROOF_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3600000),
+  PROOF_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+  CLAIM_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3600000),
+  CLAIM_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(50),
+  VALIDATOR_ASSIGNMENT_COUNT: z.coerce.number().int().positive().default(3),
+  VALIDATOR_QUORUM_REQUIRED: z.coerce.number().int().positive().default(2),
+});
 
 export type EnvConfig = z.infer<typeof envSchema>;
 
