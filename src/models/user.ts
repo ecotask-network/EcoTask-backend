@@ -44,19 +44,37 @@ export async function updateUser(
 }
 
 export async function getUserImpact(id: string) {
-  const proofs = await prisma.proof.findMany({
-    where: { userId: id, status: 'APPROVED' },
-    include: { task: { select: { type: true, rewardAmount: true } } },
+  // Use raw SQL aggregation for true single-query performance with indexed columns
+  const aggResult = await prisma.$queryRaw<
+    Array<{ task_type: string; proof_count: bigint; total_reward: number | null }>
+  >`
+    SELECT 
+      t.type as task_type,
+      COUNT(*) as proof_count,
+      SUM(t.reward_amount) as total_reward
+    FROM proofs p
+    JOIN tasks t ON p.task_id = t.id
+    WHERE p.user_id = ${id} AND p.status = 'APPROVED'
+    GROUP BY t.type
+  `;
+
+  // Build response object with totals and byType breakdown
+  const byType: Record<string, { count: number; reward: number }> = {};
+  let totalApproved = 0;
+  let totalReward = 0;
+
+  aggResult.forEach((row) => {
+    const count = Number(row.proof_count);
+    const reward = row.total_reward ?? 0;
+
+    byType[row.task_type] = { count, reward };
+    totalApproved += count;
+    totalReward += reward;
   });
 
   return {
-    totalApproved: proofs.length,
-    totalReward: proofs.reduce((sum, p) => sum + p.task.rewardAmount, 0),
-    byType: proofs.reduce<Record<string, { count: number; reward: number }>>((acc, p) => {
-      if (!acc[p.task.type]) acc[p.task.type] = { count: 0, reward: 0 };
-      acc[p.task.type].count++;
-      acc[p.task.type].reward += p.task.rewardAmount;
-      return acc;
-    }, {}),
+    totalApproved,
+    totalReward,
+    byType,
   };
 }
