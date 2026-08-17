@@ -1,5 +1,6 @@
 /// <reference path="./types/express.d.ts" />
 
+import './config/startup.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -19,12 +20,7 @@ import { apiLimiter, authLimiter, proofLimiter } from './middleware/rateLimit.js
 import { sanitizeInput } from './middleware/sanitize.js';
 import prisma from './utils/prisma.js';
 import logger from './utils/logger.js';
-import { validateEnv } from './config/validate.js';
 import config from './config/default.js';
-
-if (process.env.NODE_ENV !== 'test') {
-  validateEnv();
-}
 
 if (process.env.NODE_ENV !== 'test') {
   import('./workers/verificationWorker.js');

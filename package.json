@@ -14,6 +14,7 @@
     "db:seed": "ts-node prisma/seed.ts",
     "queues:cleanup": "node dist/scripts/cleanupQueueJobs.js",
     "queues:verify-retention": "node dist/scripts/verifyQueueRetention.js",
+    "check:jwt-secret": "jest --runInBand tests/config/jwtSecret.test.ts",
     "lint": "eslint src/",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts' '*.{json,md,yml}'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts' '*.{json,md,yml}'",
