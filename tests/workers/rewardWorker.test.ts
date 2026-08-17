@@ -1,4 +1,4 @@
-import { Worker } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 
 jest.mock('bullmq', () => ({
   Worker: jest.fn(() => ({
@@ -40,7 +40,7 @@ jest.mock('../../src/utils/logger', () => ({
   default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
 }));
 
-import { startRewardWorker } from '../../src/workers/rewardWorker';
+import { enqueueRewardPayout, startRewardWorker } from '../../src/workers/rewardWorker';
 import prisma from '../../src/utils/prisma';
 import { submitReward } from '../../src/services/stellarService';
 
@@ -71,6 +71,23 @@ function approvedProof(overrides: Record<string, unknown> = {}) {
 describe('Reward Worker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('retains completed and failed payout jobs', async () => {
+    await enqueueRewardPayout('proof-1');
+
+    const queue = (Queue as unknown as jest.Mock).mock.results[0].value as {
+      add: jest.Mock;
+    };
+
+    expect(queue.add).toHaveBeenCalledWith(
+      'payout',
+      { proofId: 'proof-1' },
+      {
+        removeOnComplete: { count: 1000 },
+        removeOnFail: { age: 604800 },
+      },
+    );
   });
 
   it('skips payout for an already rewarded proof', async () => {
