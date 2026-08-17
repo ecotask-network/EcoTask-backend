@@ -95,6 +95,7 @@ model Proof {
   verifications Verification[]
   validatorVotes ValidatorVote[]
 
+  @@index([userId, status])
   @@map("proofs")
 }
 
