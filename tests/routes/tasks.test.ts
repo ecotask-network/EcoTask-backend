@@ -312,4 +312,55 @@ describe('Task Routes', () => {
       expect(res.status).toBe(204);
     });
   });
+
+  describe('Special character handling', () => {
+    it('round-trips special characters in task title byte-identical', async () => {
+      const specialChars = 'Cleanup & Recycling <urgent> "quotes" \'apostrophes\'';
+      const taskWithSpecialChars = { id: 'task-1', title: specialChars };
+      
+      mockTask.createTask.mockResolvedValue(taskWithSpecialChars);
+      
+      const res = await request(app)
+        .post('/tasks')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          title: specialChars,
+          type: 'cleanup',
+          rewardAmount: 50,
+          lat: 40.71,
+          lng: -74.0,
+        });
+      
+      expect(res.status).toBe(201);
+      expect(res.body.title).toBe(specialChars);
+      expect(mockTask.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({ title: specialChars }),
+      );
+    });
+
+    it('round-trips special characters in task description byte-identical', async () => {
+      const specialDesc = 'Task description with & symbols, <tags>, "quotes", and \'apostrophes\'';
+      const taskWithSpecialDesc = { id: 'task-1', title: 'Test', description: specialDesc };
+      
+      mockTask.createTask.mockResolvedValue(taskWithSpecialDesc);
+      
+      const res = await request(app)
+        .post('/tasks')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          title: 'Test',
+          description: specialDesc,
+          type: 'cleanup',
+          rewardAmount: 50,
+          lat: 40.71,
+          lng: -74.0,
+        });
+      
+      expect(res.status).toBe(201);
+      expect(res.body.description).toBe(specialDesc);
+      expect(mockTask.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({ description: specialDesc }),
+      );
+    });
+  });
 });
