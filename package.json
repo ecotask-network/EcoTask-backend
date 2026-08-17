@@ -12,6 +12,8 @@
     "test:e2e": "jest --passWithNoTests --testMatch '**/tests/e2e/**/*.test.ts'",
     "db:migrate": "prisma migrate dev",
     "db:seed": "ts-node prisma/seed.ts",
+    "queues:cleanup": "node dist/scripts/cleanupQueueJobs.js",
+    "queues:verify-retention": "node dist/scripts/verifyQueueRetention.js",
     "lint": "eslint src/",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts' '*.{json,md,yml}'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts' '*.{json,md,yml}'",

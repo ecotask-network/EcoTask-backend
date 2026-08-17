@@ -8,11 +8,18 @@ import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
 
-export const verificationQueue = new Queue('proof-verification', { connection });
+const queueName = QUEUE_NAMES.proofVerification;
+const retentionOptions = getQueueRetentionOptions(queueName);
+
+export const verificationQueue = new Queue(queueName, {
+  connection,
+  defaultJobOptions: retentionOptions,
+});
 
 export async function enqueueVerification(proofId: string) {
   await verificationQueue.add(
@@ -21,12 +28,13 @@ export async function enqueueVerification(proofId: string) {
     {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
+      ...retentionOptions,
     },
   );
 }
 
 const worker = new Worker(
-  'proof-verification',
+  queueName,
   async (job) => {
     const { proofId } = job.data;
     logger.info('Processing proof verification', { proofId });
