@@ -1,6 +1,7 @@
 import ExifReader from 'exifreader';
 import fs from 'fs';
 import { createHash } from 'crypto';
+import { pipeline } from 'stream/promises';
 import { imageSize } from 'image-size';
 
 export const MIN_PHOTO_WIDTH = 480;
@@ -26,9 +27,19 @@ export interface PhotoMetadata {
   gpsLng: number | null;
 }
 
-export function hashFile(filePath: string): string {
-  const buffer = fs.readFileSync(filePath);
-  return createHash('sha256').update(buffer).digest('hex');
+/**
+ * Hash a file's contents with SHA-256, streaming it off disk in chunks
+ * instead of buffering the whole file with `fs.readFileSync`. For a ~10MB
+ * photo, a synchronous full-file read + hash blocks the Node event loop for
+ * the entire operation, stalling every other in-flight request on the
+ * process. `fs.createReadStream` + `stream/promises` `pipeline` reads and
+ * hashes in small chunks, yielding to the event loop between chunks, so the
+ * process keeps servicing other requests while a hash is in progress.
+ */
+export async function hashFile(filePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(fs.createReadStream(filePath), hash);
+  return hash.digest('hex');
 }
 
 /**
@@ -37,7 +48,10 @@ export function hashFile(filePath: string): string {
  * PNG IHDR, WebP VP8, etc.) — completely independent of EXIF metadata.
  * A 10×10 JPEG with PixelXDimension=4000 in its EXIF will return {width:10, height:10}.
  */
-function decodeActualDimensions(buffer: Buffer): { width: number | null; height: number | null } {
+function decodeActualDimensions(buffer: Buffer): {
+  width: number | null;
+  height: number | null;
+} {
   try {
     const result = imageSize(buffer);
     const width = result.width != null && result.width > 0 ? result.width : null;
@@ -65,7 +79,10 @@ function parseCaptureTime(tags: ExifReader.Tags): Date | null {
   return null;
 }
 
-function parseExifGps(tags: ExifReader.Tags): { gpsLat: number | null; gpsLng: number | null } {
+function parseExifGps(tags: ExifReader.Tags): {
+  gpsLat: number | null;
+  gpsLng: number | null;
+} {
   try {
     if (!tags.GPSLatitude || !tags.GPSLongitude) return { gpsLat: null, gpsLng: null };
     const lat = parseFloat(tags.GPSLatitude.description as string);
@@ -79,7 +96,20 @@ function parseExifGps(tags: ExifReader.Tags): { gpsLat: number | null; gpsLng: n
 
 export async function extractPhotoMetadata(filePath: string): Promise<PhotoMetadata> {
   try {
-    const buffer = fs.readFileSync(filePath);
+    // NOTE on the non-blocking tradeoff: `exifreader` and `image-size` are
+    // both synchronous, in-memory-buffer APIs — decoding EXIF tags and
+    // image headers is unavoidably a synchronous CPU-bound step with these
+    // libraries, short of rewriting their internals (out of scope here).
+    // What we *can* fix is the file I/O feeding that buffer: `fs.readFileSync`
+    // blocks the event loop for the full disk-read duration on top of the
+    // decode; `fs.promises.readFile` performs the read asynchronously via
+    // libuv's thread pool and only resumes this function (and runs the sync
+    // decode below) on a subsequent event-loop tick. So this is a partial
+    // fix — non-blocking I/O plus, when called concurrently for multiple
+    // files (see proofController), the sync decode work for each file gets
+    // interleaved across event-loop ticks instead of one file's read+decode
+    // fully blocking before the next file's read even starts.
+    const buffer = await fs.promises.readFile(filePath);
     // Decode real dimensions from image headers — never trust EXIF for this.
     const { width, height } = decodeActualDimensions(buffer);
     const tags = ExifReader.load(buffer);
@@ -118,7 +148,10 @@ export function isRecentlyCaptured(capturedAt?: Date | null): boolean {
  * A positive skew beyond MAX_CAPTURE_SKEW_MS is physically impossible and
  * indicates a forged DateTimeOriginal field.
  */
-export function hasFutureCaptureSkew(capturedAt: Date | null, referenceTime: Date): boolean {
+export function hasFutureCaptureSkew(
+  capturedAt: Date | null,
+  referenceTime: Date,
+): boolean {
   if (!capturedAt) return false;
   return capturedAt.getTime() - referenceTime.getTime() > MAX_CAPTURE_SKEW_MS;
 }
