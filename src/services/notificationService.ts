@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import prisma from '../utils/prisma.js';
 import logger from '../utils/logger.js';
+import { getRequestId } from '../utils/requestContext.js';
 
 export interface NotificationInput {
   userId: string;
@@ -35,16 +36,24 @@ type PrismaOrTx = PrismaClient | Prisma.TransactionClient;
  */
 export async function createNotification(
   input: NotificationInput,
-  tx: PrismaOrTx = prisma,
+  txOrRequestId: PrismaOrTx | string = prisma,
+  requestId?: string,
 ): Promise<CreatedNotification> {
+  const tx = typeof txOrRequestId === 'string' ? prisma : txOrRequestId;
+  const resolvedRequestId =
+    typeof txOrRequestId === 'string' ? txOrRequestId : (requestId ?? getRequestId());
   const notification = await tx.notification.create({ data: input });
   const outbox = await tx.notificationOutbox.create({
-    data: { notificationId: notification.id },
+    data: {
+      notificationId: notification.id,
+      ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+    },
   });
   logger.info('Notification and outbox row persisted', {
     notificationId: notification.id,
     outboxId: outbox.id,
     ...input,
+    ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
   });
   return { notificationId: notification.id, outboxId: outbox.id };
 }
@@ -53,8 +62,12 @@ export async function notifyProofStatus(
   userId: string,
   proofId: string,
   status: string,
-  tx: PrismaOrTx = prisma,
+  txOrRequestId: PrismaOrTx | string = prisma,
+  requestId?: string,
 ): Promise<CreatedNotification> {
+  const tx = typeof txOrRequestId === 'string' ? prisma : txOrRequestId;
+  const resolvedRequestId =
+    typeof txOrRequestId === 'string' ? txOrRequestId : (requestId ?? getRequestId());
   const isApproved = status === 'APPROVED';
   const created = await createNotification(
     {
@@ -66,7 +79,13 @@ export async function notifyProofStatus(
         : 'Your proof was rejected. Please review the notes and submit a new proof.',
     },
     tx,
+    resolvedRequestId,
   );
-  logger.info('Sending proof status notification', { userId, proofId, status });
+  logger.info('Sending proof status notification', {
+    userId,
+    proofId,
+    status,
+    ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+  });
   return created;
 }

@@ -186,6 +186,7 @@ model Notification {
 model NotificationOutbox {
   id             String                    @id @default(uuid())
   notificationId String                    @map("notification_id")
+  requestId      String?                   @map("request_id")
   status         NotificationOutboxStatus  @default(PENDING)
   attempts       Int                       @default(0)
   lastError      String?                   @map("last_error")

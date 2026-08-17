@@ -63,7 +63,11 @@ export async function drainNotificationOutbox(
     result.claimed += 1;
 
     try {
-      await enqueueNotificationDispatch(row.id, row.notificationId);
+      if (row.requestId) {
+        await enqueueNotificationDispatch(row.id, row.notificationId, row.requestId);
+      } else {
+        await enqueueNotificationDispatch(row.id, row.notificationId);
+      }
       await prisma.notificationOutbox.update({
         where: { id: row.id },
         data: { status: 'SENT', attempts: row.attempts + 1, lastError: null },
@@ -83,7 +87,8 @@ export async function drainNotificationOutbox(
           outboxId: row.id,
           notificationId: row.notificationId,
           attempts,
-          err: message,
+          ...(row.requestId ? { requestId: row.requestId } : {}),
+          err,
         });
       } else {
         await prisma.notificationOutbox.update({
@@ -100,7 +105,8 @@ export async function drainNotificationOutbox(
           outboxId: row.id,
           notificationId: row.notificationId,
           attempts,
-          err: message,
+          ...(row.requestId ? { requestId: row.requestId } : {}),
+          err,
         });
       }
     }

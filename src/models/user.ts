@@ -48,7 +48,7 @@ export async function getUserImpact(id: string) {
   const aggResult = await prisma.$queryRaw<
     Array<{ task_type: string; proof_count: bigint; total_reward: number | null }>
   >`
-    SELECT 
+    SELECT
       t.type as task_type,
       COUNT(*) as proof_count,
       SUM(t.reward_amount) as total_reward

@@ -146,6 +146,14 @@ describe('Proof Routes', () => {
         .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
       expect(res.status).toBe(201);
       expect(res.body.status).toBe('PENDING');
+      expect(res.headers['x-request-id']).toBeDefined();
+      const { enqueueVerification } = jest.requireMock(
+        '../../src/workers/verificationWorker',
+      ) as { enqueueVerification: jest.Mock };
+      expect(enqueueVerification).toHaveBeenCalledWith(
+        'proof-1',
+        res.headers['x-request-id'],
+      );
     });
   });
 
@@ -443,7 +451,10 @@ describe('Proof Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('APPROVED');
       expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
-      expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1');
+      expect(enqueueRewardPayout).toHaveBeenCalledWith(
+        'proof-1',
+        res.headers['x-request-id'],
+      );
     });
   });
 });

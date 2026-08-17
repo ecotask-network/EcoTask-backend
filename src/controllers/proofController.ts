@@ -173,7 +173,7 @@ export async function submitProof(req: Request, res: Response) {
   // Only enqueue auto-verification when GPS is consistent.  A mismatch leaves
   // the proof in PENDING status for manual validator review.
   if (!gpsMismatch) {
-    await enqueueVerification(proof.id);
+    await enqueueVerification(proof.id, req.requestId);
   }
 
   const result = await prisma.proof.findUnique({
@@ -279,7 +279,7 @@ export async function reviewProof(req: Request, res: Response) {
     }),
   ]);
 
-  await notifyProofStatus(proof.userId, proof.id, status);
+  await notifyProofStatus(proof.userId, proof.id, status, req.requestId);
 
   if (status === 'APPROVED') {
     const completed = await completeTaskIfFull(proof.taskId);
@@ -287,7 +287,7 @@ export async function reviewProof(req: Request, res: Response) {
       logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
     }
 
-    await enqueueRewardPayout(proof.id);
+    await enqueueRewardPayout(proof.id, req.requestId);
   }
 
   const updated = await prisma.proof.findUnique({

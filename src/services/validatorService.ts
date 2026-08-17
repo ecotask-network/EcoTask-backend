@@ -82,6 +82,7 @@ export async function castVote(
   validatorId: string,
   verdict: 'approved' | 'rejected',
   notes?: string,
+  requestId?: string,
 ): Promise<QuorumOutcome> {
   const vote = await prisma.validatorVote.findUnique({
     where: { proofId_validatorId: { proofId, validatorId } },
@@ -103,7 +104,7 @@ export async function castVote(
     data: { reviewCount: { increment: 1 } },
   });
 
-  return resolveQuorum(proofId);
+  return resolveQuorum(proofId, requestId);
 }
 
 /**
@@ -112,7 +113,10 @@ export async function castVote(
  * triggering the reward), or escalates to manual review when all assigned
  * validators have voted without reaching agreement.
  */
-export async function resolveQuorum(proofId: string): Promise<QuorumOutcome> {
+export async function resolveQuorum(
+  proofId: string,
+  requestId?: string,
+): Promise<QuorumOutcome> {
   const proof = await prisma.proof.findUnique({
     where: { id: proofId },
     include: { validatorVotes: true },
@@ -135,7 +139,7 @@ export async function resolveQuorum(proofId: string): Promise<QuorumOutcome> {
   )?.[0] as 'approved' | 'rejected' | undefined;
 
   if (winner) {
-    return finalizeProof(proofId, winner, submitted);
+    return finalizeProof(proofId, winner, submitted, requestId);
   }
 
   const allVoted = submitted.length >= proof.validatorVotes.length;
@@ -159,6 +163,7 @@ async function finalizeProof(
   proofId: string,
   verdict: 'approved' | 'rejected',
   submitted: { validatorId: string; verdict: string | null }[],
+  requestId?: string,
 ): Promise<QuorumOutcome> {
   const status = verdict === 'approved' ? 'APPROVED' : 'REJECTED';
 
@@ -199,7 +204,11 @@ async function finalizeProof(
       select: { userId: true, taskId: true },
     });
     if (proofRecord) {
-      await notifyProofStatus(proofRecord.userId, proofId, status, tx);
+      if (requestId) {
+        await notifyProofStatus(proofRecord.userId, proofId, status, tx, requestId);
+      } else {
+        await notifyProofStatus(proofRecord.userId, proofId, status, tx);
+      }
     }
     return proofRecord;
   });
@@ -209,7 +218,7 @@ async function finalizeProof(
     if (completed) {
       logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
     }
-    await enqueueRewardPayout(proofId);
+    await enqueueRewardPayout(proofId, requestId);
   }
 
   logger.info('Quorum reached, proof finalized', { proofId, status });

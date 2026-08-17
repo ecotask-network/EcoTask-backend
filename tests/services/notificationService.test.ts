@@ -55,6 +55,29 @@ describe('NotificationService', () => {
       expect(result).toEqual({ notificationId: 'notif-1', outboxId: 'outbox-1' });
     });
 
+    it('persists the originating request ID with the outbox row', async () => {
+      mockPrisma.notification.create.mockResolvedValue({ id: 'notif-request' });
+      mockPrisma.notificationOutbox.create.mockResolvedValue({
+        id: 'outbox-request',
+      });
+
+      await createNotification(
+        {
+          userId: 'user-request',
+          type: 'proof.approved',
+          title: 'Proof approved',
+        },
+        'request-1',
+      );
+
+      expect(mockPrisma.notificationOutbox.create).toHaveBeenCalledWith({
+        data: {
+          notificationId: 'notif-request',
+          requestId: 'request-1',
+        },
+      });
+    });
+
     it('uses the provided transaction client instead of the default prisma client', async () => {
       const tx = {
         notification: { create: jest.fn().mockResolvedValue({ id: 'notif-2' }) },

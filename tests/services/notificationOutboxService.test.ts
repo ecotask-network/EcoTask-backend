@@ -51,6 +51,7 @@ function outboxRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'outbox-1',
     notificationId: 'notif-1',
+    requestId: null,
     status: 'PENDING',
     attempts: 0,
     lastError: null,
@@ -110,6 +111,18 @@ describe('NotificationOutboxService', () => {
         },
       });
       expect(result).toEqual({ claimed: 1, sent: 0, retried: 1, deadLettered: 0 });
+    });
+
+    it('forwards a stored request ID to the dispatch job', async () => {
+      const row = outboxRow({ requestId: 'request-1' });
+      mockPrisma.notificationOutbox.findMany.mockResolvedValue([row]);
+      mockPrisma.notificationOutbox.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.notificationOutbox.update.mockResolvedValue({});
+      mockEnqueue.mockResolvedValue(undefined);
+
+      await drainNotificationOutbox();
+
+      expect(mockEnqueue).toHaveBeenCalledWith('outbox-1', 'notif-1', 'request-1');
     });
 
     it('dead-letters a row after it exhausts the configured max attempts, and it stays queryable', async () => {

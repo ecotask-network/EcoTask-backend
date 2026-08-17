@@ -4,14 +4,20 @@ import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let connection: any = null;
-let queue: Queue | null = null;
-let worker: Worker | null = null;
+let queue: Queue<RewardJobData> | null = null;
+let worker: Worker<RewardJobData> | null = null;
 const queueName = QUEUE_NAMES.rewardPayout;
 const retentionOptions = getQueueRetentionOptions(queueName);
+
+interface RewardJobData {
+  proofId: string;
+  requestId?: string;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getConnection(): any {
@@ -22,9 +28,9 @@ function getConnection(): any {
   return connection;
 }
 
-function getQueue(): Queue {
+function getQueue(): Queue<RewardJobData> {
   if (!queue) {
-    queue = new Queue(queueName, {
+    queue = new Queue<RewardJobData>(queueName, {
       connection: getConnection(),
       defaultJobOptions: retentionOptions,
     });
@@ -32,55 +38,81 @@ function getQueue(): Queue {
   return queue;
 }
 
-export async function enqueueRewardPayout(proofId: string): Promise<void> {
-  await getQueue().add('payout', { proofId }, retentionOptions);
+export async function enqueueRewardPayout(
+  proofId: string,
+  requestId?: string,
+): Promise<void> {
+  const resolvedRequestId = requestId ?? getRequestId();
+  await getQueue().add(
+    'payout',
+    { proofId, ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}) },
+    retentionOptions,
+  );
 }
 
 export function startRewardWorker(): void {
   if (worker) return;
-  worker = new Worker(
+  worker = new Worker<RewardJobData>(
     queueName,
     async (job) => {
-      const { proofId } = job.data;
-      logger.info('Processing reward payout', { proofId });
+      const { proofId, requestId } = job.data;
+      const requestMeta = requestId ? { requestId } : {};
 
-      const proof = await prisma.proof.findUnique({
-        where: { id: proofId },
-        include: { user: true, task: true },
-      });
-      if (!proof) throw new Error('Proof not found');
+      return runWithRequestContext(requestId, async () => {
+        logger.info('Processing reward payout', { proofId, ...requestMeta });
 
-      if (proof.status !== 'APPROVED') {
-        throw new Error(`Cannot pay reward for proof in state '${proof.status}'`);
-      }
-      if (proof.rewardedAt) {
-        logger.info('Skipping payout already processed', {
-          proofId,
-          rewardedAt: proof.rewardedAt,
+        const proof = await prisma.proof.findUnique({
+          where: { id: proofId },
+          include: { user: true, task: true },
         });
-        return;
-      }
+        if (!proof) throw new Error('Proof not found');
 
-      const txHash = await submitReward({
-        userWallet: proof.user.wallet,
-        taskId: proof.taskId,
-        amount: proof.task.rewardAmount,
-        assetCode: proof.task.rewardToken || 'ECO',
+        if (proof.status !== 'APPROVED') {
+          throw new Error(`Cannot pay reward for proof in state '${proof.status}'`);
+        }
+        if (proof.rewardedAt) {
+          logger.info('Skipping payout already processed', {
+            proofId,
+            rewardedAt: proof.rewardedAt,
+            ...requestMeta,
+          });
+          return;
+        }
+
+        const txHash = await submitReward({
+          userWallet: proof.user.wallet,
+          taskId: proof.taskId,
+          amount: proof.task.rewardAmount,
+          assetCode: proof.task.rewardToken || 'ECO',
+        });
+
+        await prisma.proof.update({
+          where: { id: proofId },
+          data: { rewardedAt: new Date() },
+        });
+
+        logger.info('Reward paid successfully', {
+          proofId,
+          txHash,
+          ...requestMeta,
+        });
       });
-
-      await prisma.proof.update({
-        where: { id: proofId },
-        data: { rewardedAt: new Date() },
-      });
-
-      logger.info('Reward paid successfully', { proofId, txHash });
     },
     { connection: getConnection() },
   );
 
-  worker.on('completed', (job) => logger.info('Reward job completed', { jobId: job.id }));
+  worker.on('completed', (job) =>
+    logger.info('Reward job completed', {
+      jobId: job.id,
+      ...(job.data.requestId ? { requestId: job.data.requestId } : {}),
+    }),
+  );
   worker.on('failed', (job, err) =>
-    logger.error('Reward job failed', { jobId: job?.id, err }),
+    logger.error('Reward job failed', {
+      jobId: job?.id,
+      ...(job?.data?.requestId ? { requestId: job.data.requestId } : {}),
+      err,
+    }),
   );
 }
 
