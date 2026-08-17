@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+import { decodeCursor, encodeCursor } from '../utils/cursor.js';
 
 export interface TaskFilters {
   type?: string;
@@ -40,18 +41,38 @@ export async function listTasks(filters: TaskFilters = {}) {
   }
 
   if (filters.cursor) {
-    where.createdAt = { lt: new Date(filters.cursor) };
+    const cursor = decodeCursor(filters.cursor);
+    const cursorDate = new Date(cursor.createdAt);
+
+    if (cursor.id) {
+      // Composite cursor: (createdAt, id) descending. Rows strictly after
+      // the cursor row in that order are either older, or tied on
+      // createdAt with a smaller id.
+      where.OR = [
+        { createdAt: { lt: cursorDate } },
+        { createdAt: cursorDate, id: { lt: cursor.id } },
+      ];
+    } else {
+      // Legacy bare-date cursor with no tie-breaker id: fall back to a
+      // createdAt-only comparison for this one page. Rows sharing the
+      // cursor's exact createdAt cannot be disambiguated without an id,
+      // so they may be skipped or repeated on this page only — the
+      // nextCursor we return is always the new composite format, so
+      // subsequent pages self-heal.
+      where.createdAt = { lt: cursorDate };
+    }
   }
 
   const tasks = await prisma.task.findMany({
     where,
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
   });
 
   const hasMore = tasks.length > limit;
   const items = hasMore ? tasks.slice(0, limit) : tasks;
-  const nextCursor = hasMore ? items[items.length - 1].createdAt.toISOString() : null;
+  const last = items[items.length - 1];
+  const nextCursor = hasMore ? encodeCursor(last.createdAt, last.id) : null;
 
   return { items, nextCursor };
 }
