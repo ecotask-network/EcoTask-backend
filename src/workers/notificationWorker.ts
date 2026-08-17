@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import config from '../config/default';
 import { dispatchNotification } from '../services/notificationDispatchService';
 import logger from '../utils/logger';
+import { registerWorker, unregisterWorker } from '../utils/workerHealth.js';
 
 // Connections are created lazily so importing this module never opens a
 // socket; it only connects once a dispatch is enqueued or the worker starts.
@@ -63,9 +64,13 @@ export function startNotificationWorker(): void {
   worker.on('failed', (job, err) =>
     logger.error('Notification dispatch failed', { jobId: job?.id, err }),
   );
+
+  // Register worker for health tracking
+  registerWorker('notification');
 }
 
 export async function shutdownNotificationWorker(): Promise<void> {
+  unregisterWorker('notification');
   if (worker) {
     await worker.close();
     worker = null;
