@@ -17,7 +17,7 @@ jest.mock('../../src/services/rateLimitService', () => ({
 jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
-    user: { findUnique: jest.fn() },
+    user: { findUnique: jest.fn(), update: jest.fn() },
     proof: { findMany: jest.fn() },
   },
 }));
@@ -25,7 +25,7 @@ jest.mock('../../src/utils/prisma', () => ({
 import prisma from '../../src/utils/prisma';
 
 const mockPrisma = prisma as unknown as {
-  user: { findUnique: jest.Mock };
+  user: { findUnique: jest.Mock; update: jest.Mock };
   proof: { findMany: jest.Mock };
 };
 
@@ -85,6 +85,50 @@ describe('User Routes', () => {
       expect(res.status).toBe(200);
       expect(mockPrisma.user.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'user-1' } }),
+      );
+    });
+  });
+
+  describe('PUT /users/:id', () => {
+    it('round-trips special characters byte-identical', async () => {
+      const specialChars = 'Café & Sons <script> "quotes" \'apostrophes\'';
+      const updatedUser = { ...mockUser, name: specialChars };
+      
+      mockPrisma.user.findUnique.mockResolvedValue(mockUser);
+      mockPrisma.user.update.mockResolvedValue(updatedUser);
+      
+      const res = await request(app)
+        .put('/users/user-1')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .send({ name: specialChars });
+      
+      expect(res.status).toBe(200);
+      expect(res.body.name).toBe(specialChars);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ name: specialChars }),
+        }),
+      );
+    });
+
+    it('does not HTML-escape ampersands in URLs', async () => {
+      const webhookUrl = 'https://example.com/webhook?param1=value1&param2=value2';
+      const updatedUser = { ...mockUser, webhookUrl };
+      
+      mockPrisma.user.findUnique.mockResolvedValue(mockUser);
+      mockPrisma.user.update.mockResolvedValue(updatedUser);
+      
+      const res = await request(app)
+        .put('/users/user-1')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .send({ webhookUrl });
+      
+      expect(res.status).toBe(200);
+      expect(res.body.webhookUrl).toBe(webhookUrl);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ webhookUrl }),
+        }),
       );
     });
   });
