@@ -1,6 +1,10 @@
+import { resolveJwtSecret } from './jwtSecret.js';
+
+const nodeEnv = process.env.NODE_ENV || 'development';
+
 export default {
   port: parseInt(process.env.PORT || '3000'),
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   corsOrigin: process.env.CORS_ORIGIN || '*',
   database: {
     url:
@@ -50,6 +54,12 @@ export default {
     webhookTimeoutMs: parseInt(process.env.NOTIFICATION_WEBHOOK_TIMEOUT_MS || '5000', 10),
     emailFrom:
       process.env.NOTIFICATION_EMAIL_FROM || 'EcoTask <no-reply@ecotask.network>',
+    outboxMaxAttempts: parseInt(process.env.NOTIFICATION_OUTBOX_MAX_ATTEMPTS || '3', 10),
+    outboxBatchSize: parseInt(process.env.NOTIFICATION_OUTBOX_BATCH_SIZE || '20', 10),
+    outboxSweepIntervalMs: parseInt(
+      process.env.NOTIFICATION_OUTBOX_SWEEP_INTERVAL_MS || '30000',
+      10,
+    ),
   },
   rateLimit: {
     proofWindowMs: parseInt(
@@ -68,7 +78,7 @@ export default {
     quorumRequired: parseInt(process.env.VALIDATOR_QUORUM_REQUIRED || '2', 10),
   },
   jwt: {
-    secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    secret: resolveJwtSecret(nodeEnv, process.env.JWT_SECRET),
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     issuer: process.env.JWT_ISSUER || 'ecotask-backend',
     audience: process.env.JWT_AUDIENCE || 'ecotask-users',

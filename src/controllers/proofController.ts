@@ -53,44 +53,68 @@ export async function submitProof(req: Request, res: Response) {
     },
   });
 
-  // GPS extracted from the first photo that carries EXIF GPS.  We collect it
-  // alongside width/height in a single extractPhotoMetadata pass — no separate
-  // EXIF load needed.
+  // GPS extracted from the first photo (in original upload order) that
+  // carries EXIF GPS.  We collect it alongside width/height in a single
+  // extractPhotoMetadata pass — no separate EXIF load needed.
   let gpsFromPhoto: { lat: number; lng: number } | null = null;
 
   const files = req.files as Express.Multer.File[] | undefined;
   if (files && files.length > 0) {
-    for (const file of files) {
-      const [sha256, metadata] = await Promise.all([
-        hashFile(file.path),
-        extractPhotoMetadata(file.path),
-      ]);
+    // Process all files concurrently rather than sequentially. Each file's
+    // hash/EXIF/upload/DB-write/cleanup pipeline is independent, so running
+    // them in parallel lets the non-blocking I/O (hashFile's stream read,
+    // extractPhotoMetadata's async read, uploadToIPFS's network call) for
+    // one file overlap with another instead of fully serializing. The
+    // upload route caps this at 5 files (`upload.array('photos', 5)`) with
+    // a 10MB-per-file limit (`limits.fileSize` in src/middleware/upload.ts),
+    // so per-request in-flight memory is already bounded (~50MB worst case)
+    // by the existing request schema — no additional concurrency limiting
+    // is introduced here.
+    //
+    // `Promise.all` settles results in the same order as the input array
+    // (not resolution order), so `fileResults[i]` always corresponds to
+    // `files[i]` — this lets us pick the GPS-bearing photo deterministically
+    // by original upload order below, rather than by whichever promise
+    // happens to settle first.
+    const fileResults = await Promise.all(
+      files.map(async (file) => {
+        const [sha256, metadata] = await Promise.all([
+          hashFile(file.path),
+          extractPhotoMetadata(file.path),
+        ]);
 
-      // Capture the first photo's EXIF GPS for cross-checking below.
-      if (!gpsFromPhoto && metadata.gpsLat != null && metadata.gpsLng != null) {
-        gpsFromPhoto = { lat: metadata.gpsLat, lng: metadata.gpsLng };
-      }
+        const cid = await uploadToIPFS(file.path, file.filename);
 
-      const cid = await uploadToIPFS(file.path, file.filename);
-
-      await prisma.proofPhoto.create({
-        data: {
-          proofId: proof.id,
-          cid,
-          filename: file.originalname,
-          sha256,
-          width: metadata.width,
-          height: metadata.height,
-          capturedAt: metadata.capturedAt,
-        },
-      });
-
-      fs.promises.unlink(file.path).catch((err) => {
-        logger.warn('Failed to clean up uploaded file', {
-          err,
-          path: file.path,
+        await prisma.proofPhoto.create({
+          data: {
+            proofId: proof.id,
+            cid,
+            filename: file.originalname,
+            sha256,
+            width: metadata.width,
+            height: metadata.height,
+            capturedAt: metadata.capturedAt,
+          },
         });
-      });
+
+        fs.promises.unlink(file.path).catch((err) => {
+          logger.warn('Failed to clean up uploaded file', {
+            err,
+            path: file.path,
+          });
+        });
+
+        return metadata;
+      }),
+    );
+
+    // Deterministic pass over original file order — pick the first photo
+    // with EXIF GPS, regardless of which underlying promise settled first.
+    for (const metadata of fileResults) {
+      if (metadata.gpsLat != null && metadata.gpsLng != null) {
+        gpsFromPhoto = { lat: metadata.gpsLat, lng: metadata.gpsLng };
+        break;
+      }
     }
   }
 

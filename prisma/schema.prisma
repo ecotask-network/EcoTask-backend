@@ -14,6 +14,13 @@ enum ProofStatus {
   REJECTED
 }
 
+enum NotificationOutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD_LETTER
+}
+
 model User {
   id        String   @id @default(uuid())
   wallet    String   @unique
@@ -88,6 +95,7 @@ model Proof {
   verifications Verification[]
   validatorVotes ValidatorVote[]
 
+  @@index([userId, status])
   @@map("proofs")
 }
 
@@ -163,7 +171,31 @@ model Notification {
   createdAt    DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outbox NotificationOutbox[]
 
   @@index([userId, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+// Transactional outbox for notification dispatch. A row is created in the
+// SAME database transaction as the event that triggers the notification
+// (e.g. a proof status change), so a crash before the BullMQ enqueue still
+// leaves a recoverable PENDING row that the outbox drainer can pick up and
+// enqueue after restart. Once max attempts are exceeded the row is moved to
+// DEAD_LETTER so failures are observable instead of silently dropped.
+model NotificationOutbox {
+  id             String                    @id @default(uuid())
+  notificationId String                    @map("notification_id")
+  requestId      String?                   @map("request_id")
+  status         NotificationOutboxStatus  @default(PENDING)
+  attempts       Int                       @default(0)
+  lastError      String?                   @map("last_error")
+  nextAttemptAt  DateTime                  @default(now()) @map("next_attempt_at")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@map("notification_outbox")
 }

@@ -1,5 +1,6 @@
 /// <reference path="./types/express.d.ts" />
 
+import './config/startup.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -13,6 +14,7 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import analyticsRoutes from './routes/analytics.js';
 import auditRoutes from './routes/audit.js';
 import notificationRoutes from './routes/notifications.js';
+import adminNotificationRoutes from './routes/adminNotifications.js';
 import validatorRoutes from './routes/validators.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { apiLimiter, authLimiter, proofLimiter } from './middleware/rateLimit.js';
@@ -20,12 +22,7 @@ import { sanitizeInput } from './middleware/sanitize.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import prisma from './utils/prisma.js';
 import logger from './utils/logger.js';
-import { validateEnv } from './config/validate.js';
 import config from './config/default.js';
-
-if (process.env.NODE_ENV !== 'test') {
-  validateEnv();
-}
 
 if (process.env.NODE_ENV !== 'test') {
   import('./workers/verificationWorker.js');
@@ -37,6 +34,9 @@ if (process.env.NODE_ENV !== 'test') {
   });
   import('./workers/notificationWorker.js').then(({ startNotificationWorker }) => {
     startNotificationWorker();
+  });
+  import('./workers/notificationOutboxSweeper.js').then(({ startOutboxSweeper }) => {
+    startOutboxSweeper();
   });
 }
 
@@ -70,6 +70,7 @@ app.use('/leaderboard', leaderboardRoutes);
 app.use('/analytics', analyticsRoutes);
 app.use('/audit', auditRoutes);
 app.use('/notifications', notificationRoutes);
+app.use('/admin', adminNotificationRoutes);
 app.use(validatorRoutes);
 
 app.use((_req, res) => {
@@ -105,6 +106,11 @@ if (process.env.NODE_ENV !== 'test') {
       const { stopExpirySweeper } = await import('./workers/expiryWorker.js');
       stopExpirySweeper();
       logger.info('Expiry sweeper stopped');
+
+      const { stopOutboxSweeper } =
+        await import('./workers/notificationOutboxSweeper.js');
+      stopOutboxSweeper();
+      logger.info('Notification outbox sweeper stopped');
 
       await prisma.$disconnect();
       logger.info('Prisma client disconnected');

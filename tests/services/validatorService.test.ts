@@ -74,10 +74,9 @@ function votesProof(verdicts: (string | null)[]) {
 describe('ValidatorService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => {
-      for (const op of ops as Array<Promise<unknown>>) await op;
-      return [];
-    });
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+    );
   });
 
   describe('assignValidators', () => {
@@ -229,6 +228,7 @@ describe('ValidatorService', () => {
         'owner-1',
         'proof-1',
         'APPROVED',
+        mockPrisma,
         'request-1',
       );
       expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');

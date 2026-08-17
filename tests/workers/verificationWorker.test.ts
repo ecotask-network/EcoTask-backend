@@ -41,6 +41,7 @@ jest.mock('../../src/utils/prisma', () => ({
   default: {
     proof: { findUnique: jest.fn(), update: jest.fn() },
     verification: { create: jest.fn() },
+    $transaction: jest.fn(),
   },
 }));
 
@@ -62,10 +63,12 @@ import {
   verificationQueue,
 } from '../../src/workers/verificationWorker';
 import prisma from '../../src/utils/prisma';
+import { notifyProofStatus } from '../../src/services/notificationService';
 
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock; update: jest.Mock };
   verification: { create: jest.Mock };
+  $transaction: jest.Mock;
 };
 
 const processor = (Worker as unknown as jest.Mock).mock.calls[0][1] as (job: {
@@ -76,6 +79,9 @@ const processor = (Worker as unknown as jest.Mock).mock.calls[0][1] as (job: {
 describe('Verification Worker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+    );
   });
 
   it('retains completed and failed jobs without changing retry behavior', async () => {
@@ -180,10 +186,16 @@ describe('Verification Worker', () => {
       data: { status: 'APPROVED' },
     });
     expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
+
+    // The proof status update, the Verification record and the notification
+    // are all committed inside the same interactive transaction so a crash
+    // between "approved" and "notified" cannot happen.
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(notifyProofStatus).toHaveBeenCalledWith(
       'user-1',
       'proof-1',
       'APPROVED',
+      mockPrisma,
       'request-1',
     );
     expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1', 'request-1');
@@ -191,6 +203,33 @@ describe('Verification Worker', () => {
       proofId: 'proof-1',
       requestId: 'request-1',
     });
+  });
+
+  it('rejects invalid proofs inside the same transaction as the notification', async () => {
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      taskId: 'task-1',
+      status: 'PENDING',
+    });
+    mockPrisma.proof.update.mockResolvedValue({});
+    const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      autoVerify: jest.Mock;
+    };
+    autoVerify.mockResolvedValue({ verdict: 'rejected', confidence: 0.1, notes: 'gps' });
+
+    await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
+
+    expect(mockPrisma.proof.update).toHaveBeenCalledWith({
+      where: { id: 'proof-1' },
+      data: { status: 'REJECTED' },
+    });
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(notifyProofStatus).toHaveBeenCalledWith(
+      'user-1',
+      'proof-1',
+      'REJECTED',
+      mockPrisma,
+    );
   });
 
   it('assigns inconclusive proofs to community validators', async () => {

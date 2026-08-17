@@ -72,11 +72,25 @@ const worker = new Worker<VerificationJobData>(
       const result = await autoVerify(proofId);
 
       if (result.verdict === 'approved') {
-        await prisma.proof.update({
-          where: { id: proofId },
-          data: { status: 'APPROVED' },
+        await prisma.$transaction(async (tx) => {
+          await tx.proof.update({
+            where: { id: proofId },
+            data: { status: 'APPROVED' },
+          });
+          await tx.verification.create({
+            data: {
+              proofId,
+              verifierId: 'auto-verifier',
+              verdict: result.verdict,
+              notes: result.notes || `confidence: ${result.confidence}`,
+            },
+          });
+          if (requestId) {
+            await notifyProofStatus(proof.userId, proofId, 'APPROVED', tx, requestId);
+          } else {
+            await notifyProofStatus(proof.userId, proofId, 'APPROVED', tx);
+          }
         });
-        await notifyProofStatus(proof.userId, proofId, 'APPROVED', requestId);
 
         const completed = await completeTaskIfFull(proof.taskId);
         if (completed) {
@@ -88,11 +102,25 @@ const worker = new Worker<VerificationJobData>(
 
         await enqueueRewardPayout(proofId, requestId);
       } else if (result.verdict === 'rejected') {
-        await prisma.proof.update({
-          where: { id: proofId },
-          data: { status: 'REJECTED' },
+        await prisma.$transaction(async (tx) => {
+          await tx.proof.update({
+            where: { id: proofId },
+            data: { status: 'REJECTED' },
+          });
+          await tx.verification.create({
+            data: {
+              proofId,
+              verifierId: 'auto-verifier',
+              verdict: result.verdict,
+              notes: result.notes || `confidence: ${result.confidence}`,
+            },
+          });
+          if (requestId) {
+            await notifyProofStatus(proof.userId, proofId, 'REJECTED', tx, requestId);
+          } else {
+            await notifyProofStatus(proof.userId, proofId, 'REJECTED', tx);
+          }
         });
-        await notifyProofStatus(proof.userId, proofId, 'REJECTED', requestId);
       } else {
         const assigned = await assignValidators(proofId);
         if (assigned > 0) {
@@ -110,16 +138,16 @@ const worker = new Worker<VerificationJobData>(
             },
           );
         }
-      }
 
-      await prisma.verification.create({
-        data: {
-          proofId,
-          verifierId: 'auto-verifier',
-          verdict: result.verdict,
-          notes: result.notes || `confidence: ${result.confidence}`,
-        },
-      });
+        await prisma.verification.create({
+          data: {
+            proofId,
+            verifierId: 'auto-verifier',
+            verdict: result.verdict,
+            notes: result.notes || `confidence: ${result.confidence}`,
+          },
+        });
+      }
     });
   },
   { connection },

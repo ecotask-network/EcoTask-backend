@@ -3,7 +3,7 @@ import IORedis from 'ioredis';
 import config from '../config/default';
 import { dispatchNotification } from '../services/notificationDispatchService';
 import logger from '../utils/logger';
-import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
+import { runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
 // Connections are created lazily so importing this module never opens a
@@ -17,6 +17,7 @@ const retentionOptions = getQueueRetentionOptions(queueName);
 
 interface NotificationJobData {
   notificationId: string;
+  outboxId: string;
   requestId?: string;
 }
 
@@ -42,31 +43,33 @@ export function getNotificationQueue(): Queue<NotificationJobData> {
   return queue;
 }
 
+// Enqueues a single BullMQ dispatch job for an already-persisted outbox row.
+// The outbox row's id is used as the BullMQ jobId so re-enqueueing the same
+// row (e.g. a retried drain sweep) is deduped by BullMQ instead of creating
+// a duplicate job. This function intentionally does NOT swallow errors: the
+// caller is `drainNotificationOutbox`, which relies on the rejection to
+// decide whether to retry the row (with backoff) or move it to
+// DEAD_LETTER — a failing Redis connection must not silently drop the
+// notification, it must leave the outbox row recoverable.
 export async function enqueueNotificationDispatch(
+  outboxId: string,
   notificationId: string,
   requestId?: string,
 ): Promise<void> {
-  const resolvedRequestId = requestId ?? getRequestId();
-  try {
-    await getNotificationQueue().add(
-      'dispatch',
-      {
-        notificationId,
-        ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
-      },
-      {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-        ...retentionOptions,
-      },
-    );
-  } catch (err) {
-    logger.error('Failed to enqueue notification dispatch', {
+  await getNotificationQueue().add(
+    'dispatch',
+    {
       notificationId,
-      ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
-      err,
-    });
-  }
+      outboxId,
+      ...(requestId ? { requestId } : {}),
+    },
+    {
+      jobId: outboxId,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      ...retentionOptions,
+    },
+  );
 }
 
 export function startNotificationWorker(): void {
