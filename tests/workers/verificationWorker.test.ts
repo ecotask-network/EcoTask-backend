@@ -58,7 +58,10 @@ jest.mock('../../src/utils/logger', () => ({
   default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
 }));
 
-import '../../src/workers/verificationWorker';
+import {
+  enqueueVerification,
+  verificationQueue,
+} from '../../src/workers/verificationWorker';
 import prisma from '../../src/utils/prisma';
 import { notifyProofStatus } from '../../src/services/notificationService';
 
@@ -78,6 +81,23 @@ describe('Verification Worker', () => {
     jest.clearAllMocks();
     mockPrisma.$transaction.mockImplementation(
       async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+    );
+  });
+
+  it('retains completed and failed jobs without changing retry behavior', async () => {
+    const addSpy = (verificationQueue as unknown as { add: jest.Mock }).add;
+
+    await enqueueVerification('proof-1');
+
+    expect(addSpy).toHaveBeenCalledWith(
+      'verify',
+      { proofId: 'proof-1' },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 1000 },
+        removeOnFail: { age: 604800 },
+      },
     );
   });
 

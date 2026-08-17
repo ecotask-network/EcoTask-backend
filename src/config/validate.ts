@@ -6,6 +6,36 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  PROOF_VERIFICATION_QUEUE_COMPLETED_RETENTION_COUNT: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(1000),
+  PROOF_VERIFICATION_QUEUE_FAILED_RETENTION_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(604800),
+  REWARD_PAYOUT_QUEUE_COMPLETED_RETENTION_COUNT: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(1000),
+  REWARD_PAYOUT_QUEUE_FAILED_RETENTION_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(604800),
+  NOTIFICATION_DISPATCH_QUEUE_COMPLETED_RETENTION_COUNT: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .default(1000),
+  NOTIFICATION_DISPATCH_QUEUE_FAILED_RETENTION_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(604800),
   EXPIRY_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(900000),
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
   JWT_EXPIRES_IN: z.string().default('7d'),

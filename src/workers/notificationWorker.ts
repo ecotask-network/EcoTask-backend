@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import config from '../config/default';
 import { dispatchNotification } from '../services/notificationDispatchService';
 import logger from '../utils/logger';
+import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
 // Connections are created lazily so importing this module never opens a
 // socket; it only connects once a dispatch is enqueued or the worker starts.
@@ -10,6 +11,8 @@ import logger from '../utils/logger';
 let connection: any = null;
 let queue: Queue | null = null;
 let worker: Worker | null = null;
+const queueName = QUEUE_NAMES.notificationDispatch;
+const retentionOptions = getQueueRetentionOptions(queueName);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getConnection(): any {
@@ -25,7 +28,10 @@ function getConnection(): any {
 
 export function getNotificationQueue(): Queue {
   if (!queue) {
-    queue = new Queue('notification-dispatch', { connection: getConnection() });
+    queue = new Queue(queueName, {
+      connection: getConnection(),
+      defaultJobOptions: retentionOptions,
+    });
   }
   return queue;
 }
@@ -49,6 +55,7 @@ export async function enqueueNotificationDispatch(
       jobId: outboxId,
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
+      ...retentionOptions,
     },
   );
 }
@@ -56,7 +63,7 @@ export async function enqueueNotificationDispatch(
 export function startNotificationWorker(): void {
   if (worker) return;
   worker = new Worker(
-    'notification-dispatch',
+    queueName,
     async (job) => {
       const { notificationId } = job.data;
       logger.info('Dispatching notification', { notificationId });

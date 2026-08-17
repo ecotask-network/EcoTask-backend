@@ -4,11 +4,14 @@ import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let connection: any = null;
 let queue: Queue | null = null;
 let worker: Worker | null = null;
+const queueName = QUEUE_NAMES.rewardPayout;
+const retentionOptions = getQueueRetentionOptions(queueName);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getConnection(): any {
@@ -21,19 +24,22 @@ function getConnection(): any {
 
 function getQueue(): Queue {
   if (!queue) {
-    queue = new Queue('reward-payout', { connection: getConnection() });
+    queue = new Queue(queueName, {
+      connection: getConnection(),
+      defaultJobOptions: retentionOptions,
+    });
   }
   return queue;
 }
 
 export async function enqueueRewardPayout(proofId: string): Promise<void> {
-  await getQueue().add('payout', { proofId });
+  await getQueue().add('payout', { proofId }, retentionOptions);
 }
 
 export function startRewardWorker(): void {
   if (worker) return;
   worker = new Worker(
-    'reward-payout',
+    queueName,
     async (job) => {
       const { proofId } = job.data;
       logger.info('Processing reward payout', { proofId });

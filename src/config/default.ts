@@ -7,6 +7,38 @@ export default {
       process.env.DATABASE_URL || 'postgresql://ecotask:ecotask@localhost:5432/ecotask',
   },
   redis: { url: process.env.REDIS_URL || 'redis://localhost:6379' },
+  queueRetention: {
+    proofVerification: {
+      completedCount: parseInt(
+        process.env.PROOF_VERIFICATION_QUEUE_COMPLETED_RETENTION_COUNT || '1000',
+        10,
+      ),
+      failedAgeSeconds: parseInt(
+        process.env.PROOF_VERIFICATION_QUEUE_FAILED_RETENTION_SECONDS || '604800',
+        10,
+      ),
+    },
+    rewardPayout: {
+      completedCount: parseInt(
+        process.env.REWARD_PAYOUT_QUEUE_COMPLETED_RETENTION_COUNT || '1000',
+        10,
+      ),
+      failedAgeSeconds: parseInt(
+        process.env.REWARD_PAYOUT_QUEUE_FAILED_RETENTION_SECONDS || '604800',
+        10,
+      ),
+    },
+    notificationDispatch: {
+      completedCount: parseInt(
+        process.env.NOTIFICATION_DISPATCH_QUEUE_COMPLETED_RETENTION_COUNT || '1000',
+        10,
+      ),
+      failedAgeSeconds: parseInt(
+        process.env.NOTIFICATION_DISPATCH_QUEUE_FAILED_RETENTION_SECONDS || '604800',
+        10,
+      ),
+    },
+  },
   expirySweepIntervalMs: parseInt(process.env.EXPIRY_SWEEP_INTERVAL_MS || '900000', 10),
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
