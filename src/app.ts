@@ -13,6 +13,7 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import analyticsRoutes from './routes/analytics.js';
 import auditRoutes from './routes/audit.js';
 import notificationRoutes from './routes/notifications.js';
+import adminNotificationRoutes from './routes/adminNotifications.js';
 import validatorRoutes from './routes/validators.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { apiLimiter, authLimiter, proofLimiter } from './middleware/rateLimit.js';
@@ -36,6 +37,9 @@ if (process.env.NODE_ENV !== 'test') {
   });
   import('./workers/notificationWorker.js').then(({ startNotificationWorker }) => {
     startNotificationWorker();
+  });
+  import('./workers/notificationOutboxSweeper.js').then(({ startOutboxSweeper }) => {
+    startOutboxSweeper();
   });
 }
 
@@ -67,6 +71,7 @@ app.use('/leaderboard', leaderboardRoutes);
 app.use('/analytics', analyticsRoutes);
 app.use('/audit', auditRoutes);
 app.use('/notifications', notificationRoutes);
+app.use('/admin', adminNotificationRoutes);
 app.use(validatorRoutes);
 
 app.use((_req, res) => {
@@ -102,6 +107,11 @@ if (process.env.NODE_ENV !== 'test') {
       const { stopExpirySweeper } = await import('./workers/expiryWorker.js');
       stopExpirySweeper();
       logger.info('Expiry sweeper stopped');
+
+      const { stopOutboxSweeper } =
+        await import('./workers/notificationOutboxSweeper.js');
+      stopOutboxSweeper();
+      logger.info('Notification outbox sweeper stopped');
 
       await prisma.$disconnect();
       logger.info('Prisma client disconnected');

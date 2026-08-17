@@ -18,6 +18,12 @@ export default {
     webhookTimeoutMs: parseInt(process.env.NOTIFICATION_WEBHOOK_TIMEOUT_MS || '5000', 10),
     emailFrom:
       process.env.NOTIFICATION_EMAIL_FROM || 'EcoTask <no-reply@ecotask.network>',
+    outboxMaxAttempts: parseInt(process.env.NOTIFICATION_OUTBOX_MAX_ATTEMPTS || '3', 10),
+    outboxBatchSize: parseInt(process.env.NOTIFICATION_OUTBOX_BATCH_SIZE || '20', 10),
+    outboxSweepIntervalMs: parseInt(
+      process.env.NOTIFICATION_OUTBOX_SWEEP_INTERVAL_MS || '30000',
+      10,
+    ),
   },
   rateLimit: {
     proofWindowMs: parseInt(

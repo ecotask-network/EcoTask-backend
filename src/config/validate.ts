@@ -15,6 +15,13 @@ const envSchema = z.object({
   WEB3_STORAGE_TOKEN: z.string().optional(),
   NOTIFICATION_WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   NOTIFICATION_EMAIL_FROM: z.string().default('EcoTask <no-reply@ecotask.network>'),
+  NOTIFICATION_OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+  NOTIFICATION_OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().default(20),
+  NOTIFICATION_OUTBOX_SWEEP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30000),
   PROOF_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3600000),
   PROOF_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
   CLAIM_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3600000),
