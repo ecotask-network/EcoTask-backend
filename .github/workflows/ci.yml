@@ -32,6 +32,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://ecotask:ecotask@localhost:5432/ecotask
       - run: npm run build
+      - run: npm run check:jwt-secret
       - run: npm test
         env:
           DATABASE_URL: postgresql://ecotask:ecotask@localhost:5432/ecotask
