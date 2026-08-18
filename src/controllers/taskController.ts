@@ -15,9 +15,15 @@ export async function listTasks(req: Request, res: Response) {
       .json({ error: 'invalid query parameters', details: parsed.error.flatten() });
   }
 
-  const { swLat, swLng, neLat, neLng, ...rest } = parsed.data;
+  const { swLat, swLng, neLat, neLng, minReward, maxReward, ...rest } = parsed.data;
   const filters: taskModel.TaskFilters = {
     ...rest,
+    ...(minReward != null
+      ? { minRewardMicros: BigInt(Math.round(minReward * 10000000)) }
+      : {}),
+    ...(maxReward != null
+      ? { maxRewardMicros: BigInt(Math.round(maxReward * 10000000)) }
+      : {}),
     swLat,
     swLng,
     neLat,
@@ -26,7 +32,7 @@ export async function listTasks(req: Request, res: Response) {
 
   try {
     const { items, nextCursor } = await taskModel.listTasks(filters);
-    return res.json({ data: items, nextCursor });
+    return res.json({ data: items.map(formatTaskForApi), nextCursor });
   } catch (err) {
     if (err instanceof InvalidCursorError) {
       return res.status(400).json({ error: 'invalid cursor' });
@@ -40,7 +46,7 @@ export async function getTask(req: Request, res: Response) {
   if (!task) {
     return res.status(404).json({ error: 'task not found' });
   }
-  return res.json(task);
+  return res.json(formatTaskForApi(task));
 }
 
 export async function createTask(req: Request, res: Response) {
@@ -51,14 +57,15 @@ export async function createTask(req: Request, res: Response) {
       .json({ error: 'invalid request body', details: parsed.error.flatten() });
   }
 
-  const { expiresAt, ...rest } = parsed.data;
+  const { expiresAt, rewardAmount, ...rest } = parsed.data;
   const data: Parameters<typeof taskModel.createTask>[0] = {
     ...rest,
+    rewardAmountMicros: BigInt(Math.round(rewardAmount * 10000000)),
     ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
   };
 
   const task = await taskModel.createTask(data);
-  return res.status(201).json(task);
+  return res.status(201).json(formatTaskForApi(task));
 }
 
 export async function updateTask(req: Request, res: Response) {
@@ -74,14 +81,17 @@ export async function updateTask(req: Request, res: Response) {
     return res.status(404).json({ error: 'task not found' });
   }
 
-  const { expiresAt, ...rest } = parsed.data;
+  const { expiresAt, rewardAmount, ...rest } = parsed.data;
   const data: Parameters<typeof taskModel.updateTask>[1] = {
     ...rest,
+    ...(rewardAmount != null
+      ? { rewardAmountMicros: BigInt(Math.round(rewardAmount * 10000000)) }
+      : {}),
     ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
   };
 
   const task = await taskModel.updateTask(req.params.id, data);
-  return res.json(task);
+  return res.json(formatTaskForApi(task));
 }
 
 export async function deleteTask(req: Request, res: Response) {
@@ -92,4 +102,17 @@ export async function deleteTask(req: Request, res: Response) {
 
   await taskModel.deleteTask(req.params.id);
   return res.status(204).send();
+}
+
+function formatTaskForApi(
+  task: Record<string, unknown> & { rewardAmountMicros?: bigint | null },
+) {
+  if (!task) return task;
+  const { rewardAmountMicros, ...rest } = task;
+  return {
+    ...rest,
+    ...(rewardAmountMicros != null
+      ? { rewardAmount: Number(rewardAmountMicros) / 10000000 }
+      : {}),
+  };
 }

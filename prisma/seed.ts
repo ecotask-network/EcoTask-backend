@@ -12,7 +12,7 @@ const SAMPLE_TASKS = [
     description:
       'Collect litter along the river trail from the bridge to the playground. Bags and gloves provided at the park office.',
     type: 'cleanup',
-    rewardAmount: 50,
+    rewardAmountMicros: 500000000n,
     lat: 40.7128,
     lng: -74.006,
     status: 'ACTIVE',
@@ -24,7 +24,7 @@ const SAMPLE_TASKS = [
     description:
       'Help plant 20 native oak saplings in the community woodland. Tools and saplings on site.',
     type: 'planting',
-    rewardAmount: 75,
+    rewardAmountMicros: 750000000n,
     lat: 40.7282,
     lng: -73.7949,
     status: 'ACTIVE',
@@ -36,7 +36,7 @@ const SAMPLE_TASKS = [
     description:
       'Sort and process recyclables at the downtown collection center. Morning shift 8 AM - 12 PM.',
     type: 'recycling',
-    rewardAmount: 30,
+    rewardAmountMicros: 300000000n,
     lat: 40.758,
     lng: -73.9855,
     status: 'ACTIVE',
@@ -48,7 +48,7 @@ const SAMPLE_TASKS = [
     description:
       'Remove plastic waste and debris from the shoreline. Meet at lifeguard station #3.',
     type: 'cleanup',
-    rewardAmount: 60,
+    rewardAmountMicros: 600000000n,
     lat: 40.5771,
     lng: -73.9351,
     status: 'ACTIVE',
@@ -60,7 +60,7 @@ const SAMPLE_TASKS = [
     description:
       'Expand the raised garden beds at the Eastside community garden. Bring gardening gloves.',
     type: 'planting',
-    rewardAmount: 45,
+    rewardAmountMicros: 450000000n,
     lat: 40.7484,
     lng: -73.9857,
     status: 'ACTIVE',
@@ -72,7 +72,7 @@ const SAMPLE_TASKS = [
     description:
       'Help residents drop off old electronics for proper recycling at the city hall parking lot.',
     type: 'recycling',
-    rewardAmount: 40,
+    rewardAmountMicros: 400000000n,
     lat: 40.7127,
     lng: -74.0059,
     status: 'ACTIVE',
@@ -84,7 +84,7 @@ const SAMPLE_TASKS = [
     description:
       'Clear fallen branches and repair erosion damage on the Pine Ridge hiking trail.',
     type: 'cleanup',
-    rewardAmount: 55,
+    rewardAmountMicros: 550000000n,
     lat: 41.2033,
     lng: -73.7263,
     status: 'ACTIVE',
@@ -96,7 +96,7 @@ const SAMPLE_TASKS = [
     description:
       'Water newly planted street trees along Main Street. Water truck provided.',
     type: 'planting',
-    rewardAmount: 25,
+    rewardAmountMicros: 250000000n,
     lat: 40.7061,
     lng: -74.0087,
     status: 'ACTIVE',
@@ -107,7 +107,7 @@ const SAMPLE_TASKS = [
     title: 'Glass Recycling Sort',
     description: 'Sort recycled glass by color at the material recovery facility.',
     type: 'recycling',
-    rewardAmount: 35,
+    rewardAmountMicros: 350000000n,
     lat: 40.7243,
     lng: -74.0018,
     status: 'ACTIVE',
@@ -119,7 +119,7 @@ const SAMPLE_TASKS = [
     description:
       'Plant native riparian vegetation along the Hudson riverbank near Pier 40.',
     type: 'planting',
-    rewardAmount: 80,
+    rewardAmountMicros: 800000000n,
     lat: 40.7282,
     lng: -74.0102,
     status: 'ACTIVE',
@@ -131,7 +131,7 @@ const SAMPLE_TASKS = [
     description:
       'Walk and collect litter from the streets between 5th and 8th Avenues. Supplies at the community center.',
     type: 'cleanup',
-    rewardAmount: 20,
+    rewardAmountMicros: 200000000n,
     lat: 40.7456,
     lng: -73.9888,
     status: 'ACTIVE',
@@ -143,7 +143,7 @@ const SAMPLE_TASKS = [
     description:
       'Set up bins and signage for the weekend compost workshop at the sustainability center.',
     type: 'recycling',
-    rewardAmount: 30,
+    rewardAmountMicros: 300000000n,
     lat: 40.7384,
     lng: -73.9973,
     status: 'ACTIVE',
@@ -155,7 +155,7 @@ const SAMPLE_TASKS = [
     description:
       'Assemble and install 5 recycled-plastic park benches in Washington Square Park.',
     type: 'cleanup',
-    rewardAmount: 65,
+    rewardAmountMicros: 650000000n,
     lat: 40.7308,
     lng: -73.9973,
     status: 'ACTIVE',
@@ -167,7 +167,7 @@ const SAMPLE_TASKS = [
     description:
       'Teach kids at PS 123 how to plant and care for vegetable starts in the school garden.',
     type: 'planting',
-    rewardAmount: 50,
+    rewardAmountMicros: 500000000n,
     lat: 40.7573,
     lng: -73.9857,
     status: 'ACTIVE',
@@ -178,7 +178,7 @@ const SAMPLE_TASKS = [
     title: 'Battery Recycling Drive',
     description: 'Collect and sort household batteries at the library drop-off station.',
     type: 'recycling',
-    rewardAmount: 25,
+    rewardAmountMicros: 250000000n,
     lat: 40.7527,
     lng: -73.9772,
     status: 'ACTIVE',
@@ -190,7 +190,7 @@ const SAMPLE_TASKS = [
     description:
       'Remove invasive water hyacinth from the Jamaica Bay marsh. Waders provided.',
     type: 'cleanup',
-    rewardAmount: 70,
+    rewardAmountMicros: 700000000n,
     lat: 40.6142,
     lng: -73.8441,
     status: 'ACTIVE',
@@ -202,7 +202,7 @@ const SAMPLE_TASKS = [
     description:
       'Plant drought-resistant sedums on the green roof of the municipal building.',
     type: 'planting',
-    rewardAmount: 60,
+    rewardAmountMicros: 600000000n,
     lat: 40.7431,
     lng: -73.989,
     status: 'ACTIVE',
@@ -214,7 +214,7 @@ const SAMPLE_TASKS = [
     description:
       'Collect plastic bottles from the sports complex after the weekend tournament.',
     type: 'recycling',
-    rewardAmount: 20,
+    rewardAmountMicros: 200000000n,
     lat: 40.7888,
     lng: -73.9746,
     status: 'ACTIVE',
@@ -225,7 +225,7 @@ const SAMPLE_TASKS = [
     title: 'Expired Cleanup Task',
     description: 'This task has expired and should not appear in active listings.',
     type: 'cleanup',
-    rewardAmount: 10,
+    rewardAmountMicros: 100000000n,
     lat: 40.7128,
     lng: -74.006,
     status: 'EXPIRED',
@@ -235,7 +235,7 @@ const SAMPLE_TASKS = [
     title: 'Completed Tree Planting',
     description: 'This task was already completed.',
     type: 'planting',
-    rewardAmount: 40,
+    rewardAmountMicros: 400000000n,
     lat: 40.7282,
     lng: -73.7949,
     status: 'COMPLETED',

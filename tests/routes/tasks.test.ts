@@ -118,7 +118,10 @@ describe('Task Routes', () => {
         .query({ minReward: '30', maxReward: '60' });
       expect(res.status).toBe(200);
       expect(mockTask.listTasks).toHaveBeenCalledWith(
-        expect.objectContaining({ minReward: 30, maxReward: 60 }),
+        expect.objectContaining({
+          minRewardMicros: 300000000n,
+          maxRewardMicros: 600000000n,
+        }),
       );
     });
 
@@ -190,7 +193,7 @@ describe('Task Routes', () => {
         id: 'new-task',
         title: 'New Task',
         type: 'cleanup',
-        rewardAmount: 50,
+        rewardAmountMicros: 500000000n,
         lat: 40.71,
         lng: -74.0,
       });

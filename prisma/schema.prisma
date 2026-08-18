@@ -46,7 +46,7 @@ model Task {
   title     String
   description String?
   type      String
-  rewardAmount Float  @map("reward_amount")
+  rewardAmountMicros BigInt  @map("reward_amount_micros")
   rewardToken String? @map("reward_token")
   lat       Float
   lng       Float

@@ -32,7 +32,7 @@ export function verifyStellarSignature(
 interface RewardParams {
   userWallet: string;
   taskId: string;
-  amount: number;
+  amount: string;
   assetCode: string;
 }
 
@@ -41,7 +41,7 @@ export async function submitReward(params: RewardParams): Promise<string> {
 
   if (!config.stellar.oracleSecretKey || config.stellar.oracleSecretKey === 'mock') {
     logger.info('Mock Stellar reward', {
-      amount,
+      amount: Number(amount) / 10000000,
       assetCode,
       userWallet,
       taskId,
@@ -59,6 +59,14 @@ export async function submitReward(params: RewardParams): Promise<string> {
   const oracleAccount = await server.loadAccount(oracleKeypair.publicKey());
   const asset = new Asset(assetCode, oracleKeypair.publicKey());
 
+  const m = BigInt(amount);
+  const isNegative = m < 0n;
+  const absMicros = isNegative ? -m : m;
+  const integerPart = absMicros / 10000000n;
+  const fractionalPart = absMicros % 10000000n;
+  const sign = isNegative ? '-' : '';
+  const decimalAmount = `${sign}${integerPart}.${fractionalPart.toString().padStart(7, '0')}`;
+
   const transaction = new TransactionBuilder(oracleAccount, {
     fee: BASE_FEE,
     networkPassphrase:
@@ -68,7 +76,7 @@ export async function submitReward(params: RewardParams): Promise<string> {
       Operation.payment({
         destination: userWallet,
         asset,
-        amount: amount.toString(),
+        amount: decimalAmount,
       }),
     )
     .setTimeout(30)

@@ -20,8 +20,8 @@ describe('getUserImpact', () => {
   it('should return correct aggregation for user with multiple approved proofs', async () => {
     // Mock data: user has 5 approved proofs across 2 task types
     const mockAggResult = [
-      { task_type: 'cleanup', proof_count: 3n, total_reward: 90 },
-      { task_type: 'recycling', proof_count: 2n, total_reward: 60 },
+      { task_type: 'cleanup', proof_count: 3n, total_reward_micros: 900000000n },
+      { task_type: 'recycling', proof_count: 2n, total_reward_micros: 600000000n },
     ];
 
     mockPrisma.$queryRaw.mockResolvedValueOnce(mockAggResult);
@@ -40,8 +40,8 @@ describe('getUserImpact', () => {
 
   it('should handle null reward amounts (unknown types)', async () => {
     const mockAggResult = [
-      { task_type: 'cleanup', proof_count: 1n, total_reward: 50 },
-      { task_type: 'unknown_type', proof_count: 1n, total_reward: null },
+      { task_type: 'cleanup', proof_count: 1n, total_reward_micros: 500000000n },
+      { task_type: 'unknown_type', proof_count: 1n, total_reward_micros: null },
     ];
 
     mockPrisma.$queryRaw.mockResolvedValueOnce(mockAggResult);
@@ -72,7 +72,7 @@ describe('getUserImpact', () => {
 
   it('should execute single indexed SQL aggregation query', async () => {
     mockPrisma.$queryRaw.mockResolvedValueOnce([
-      { task_type: 'cleanup', proof_count: 1n, total_reward: 50 },
+      { task_type: 'cleanup', proof_count: 1n, total_reward_micros: 500000000n },
     ]);
 
     await getUserImpact('user-123');

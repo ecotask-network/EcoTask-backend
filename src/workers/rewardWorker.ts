@@ -82,7 +82,7 @@ export function startRewardWorker(): void {
         const txHash = await submitReward({
           userWallet: proof.user.wallet,
           taskId: proof.taskId,
-          amount: proof.task.rewardAmount,
+          amount: proof.task.rewardAmountMicros.toString(),
           assetCode: proof.task.rewardToken || 'ECO',
         });
 

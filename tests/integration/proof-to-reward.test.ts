@@ -44,7 +44,7 @@ describe('Proof-to-Reward Integration', () => {
         lat: -1.2921,
         lng: 36.8219,
         radiusMeters: 100,
-        rewardAmount: 50,
+        rewardAmountMicros: 500000000n,
         rewardToken: 'ECO',
         expiresAt: null,
       },
@@ -56,7 +56,7 @@ describe('Proof-to-Reward Integration', () => {
     const txHash = await submitReward({
       userWallet: 'GC...USER...',
       taskId: 'task-1',
-      amount: 50,
+      amount: '500000000',
       assetCode: 'ECO',
     });
     expect(txHash).toMatch(/^mock-tx-/);
@@ -75,7 +75,7 @@ describe('Proof-to-Reward Integration', () => {
         lat: -1.2921,
         lng: 36.8219,
         radiusMeters: 100,
-        rewardAmount: 50,
+        rewardAmountMicros: 500000000n,
         rewardToken: 'ECO',
         expiresAt: yesterday,
       },
