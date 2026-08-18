@@ -193,9 +193,11 @@ async function explain(sql: string, hotTable: string): Promise<PlanShape> {
 }
 
 describe('Issue #17: hot-path indexes', () => {
+  // Generous timeout: seeding inserts ~8k proofs plus photos/verifications/
+  // claims/audit rows, and test workers run in parallel.
   beforeAll(async () => {
     if (dbAvailable) await seed();
-  });
+  }, 120000);
 
   it('creates the expected index set (and drops the redundant sha256 index)', async () => {
     if (!dbAvailable) return;
