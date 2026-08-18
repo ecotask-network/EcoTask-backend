@@ -32,18 +32,23 @@ export class RedisRateLimiter {
 
   async check(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
     const client = this.getClient();
-    const windowSeconds = Math.ceil(windowMs / 1000);
 
-    const results = (await client.multi().incr(key).pttl(key).exec()) as Array<
-      [null, number]
-    >;
-    const count = Number(results[0][1]);
-    let ttlMs = Number(results[1][1]);
+    const script = `
+      local current = redis.call("INCR", KEYS[1])
+      if current == 1 then
+        redis.call("PEXPIRE", KEYS[1], ARGV[1])
+      end
+      local ttl = redis.call("PTTL", KEYS[1])
+      if ttl == -1 then
+        redis.call("PEXPIRE", KEYS[1], ARGV[1])
+        ttl = tonumber(ARGV[1])
+      end
+      return {current, ttl}
+    `;
 
-    if (ttlMs <= 0) {
-      ttlMs = windowMs;
-      await client.expire(key, windowSeconds);
-    }
+    const results = (await client.eval(script, 1, key, windowMs)) as [number, number];
+    const count = Number(results[0]);
+    const ttlMs = Number(results[1]);
 
     const allowed = count <= limit;
     return {
