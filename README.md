@@ -288,6 +288,14 @@ Tasks accept an optional `maxCompletions` capacity; once that many proofs are
 approved the task is auto-marked `COMPLETED`. Overdue `ACTIVE` tasks are
 flipped to `EXPIRED` by a background sweeper (`EXPIRY_SWEEP_INTERVAL_MS`).
 
+**Claims are enforced.** Submitting a proof requires a valid, unexpired claim
+on the task: `POST /api/proofs` returns `403` when the submitter holds no
+active claim, and a claim whose `expiresAt` has passed is rejected at submit
+time even before the background sweeper marks it expired. Each proof is
+stored with the `claimId` of the claim it was submitted under. (Proofs
+created before this rule was introduced are grandfathered: their `claimId`
+is `NULL` and they remain valid.)
+
 ### Proofs
 
 ```

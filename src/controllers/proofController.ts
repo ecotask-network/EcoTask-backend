@@ -26,32 +26,79 @@ export async function submitProof(req: Request, res: Response) {
   }
 
   const { taskId, lat: bodyLat, lng: bodyLng, notes } = parsed.data;
+  const userId = req.user!.userId;
 
-  const task = await prisma.task.findUnique({ where: { id: taskId } });
-  if (!task) {
-    return res.status(404).json({ error: 'task not found' });
-  }
-  if (task.status !== 'ACTIVE') {
-    return res.status(400).json({ error: 'task is not active' });
-  }
+  // ── Claim enforcement (issue #18) ───────────────────────────────────────────
+  // A proof may only be submitted against a valid, unexpired TaskClaim held by
+  // the submitter. Claim verification, capacity check, and proof creation all
+  // happen inside ONE transaction so a concurrent submit can never create a
+  // proof without a valid claim or race the capacity count. Expiry is enforced
+  // here at submit time (`expiresAt > now()`), not only by the background
+  // sweeper, so an expired claim is rejected even before the sweeper runs.
+  type SubmitResult =
+    | { status: 404 | 400 | 403 | 409; error: string }
+    | {
+        status: 201;
+        proof: {
+          id: string;
+          userId: string;
+          taskId: string;
+          claimId: string | null;
+          status: string;
+        };
+        task: { lat: number; lng: number; radiusMeters: number };
+      };
 
-  if (task.maxCompletions != null) {
-    const completed = await prisma.proof.count({
-      where: { taskId, status: 'APPROVED' },
-    });
-    if (completed >= task.maxCompletions) {
-      return res.status(409).json({ error: 'task has reached maximum completions' });
+  const result: SubmitResult = await prisma.$transaction(async (tx) => {
+    const task = await tx.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      return { status: 404 as const, error: 'task not found' };
     }
-  }
+    if (task.status !== 'ACTIVE') {
+      return { status: 400 as const, error: 'task is not active' };
+    }
 
-  const proof = await prisma.proof.create({
-    data: {
-      userId: req.user!.userId,
-      taskId,
-      status: 'PENDING',
-      notes,
-    },
+    const claim = await tx.taskClaim.findFirst({
+      where: {
+        taskId,
+        userId,
+        status: 'active',
+        expiresAt: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+    if (!claim) {
+      return {
+        status: 403 as const,
+        error: 'active claim required to submit proof for this task',
+      };
+    }
+
+    if (task.maxCompletions != null) {
+      const completed = await tx.proof.count({
+        where: { taskId, status: 'APPROVED' },
+      });
+      if (completed >= task.maxCompletions) {
+        return { status: 409 as const, error: 'task has reached maximum completions' };
+      }
+    }
+
+    const proof = await tx.proof.create({
+      data: {
+        userId,
+        taskId,
+        claimId: claim.id,
+        status: 'PENDING',
+        notes,
+      },
+    });
+    return { status: 201 as const, proof, task };
   });
+
+  if (result.status !== 201) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  const { proof, task } = result;
 
   // GPS extracted from the first photo (in original upload order) that
   // carries EXIF GPS.  We collect it alongside width/height in a single
@@ -176,12 +223,12 @@ export async function submitProof(req: Request, res: Response) {
     await enqueueVerification(proof.id, req.requestId);
   }
 
-  const result = await prisma.proof.findUnique({
+  const createdProof = await prisma.proof.findUnique({
     where: { id: proof.id },
     include: { photos: true, verifications: true },
   });
 
-  return res.status(201).json(result);
+  return res.status(201).json(createdProof);
 }
 
 export async function getProof(req: Request, res: Response) {

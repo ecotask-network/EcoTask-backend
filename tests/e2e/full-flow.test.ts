@@ -53,7 +53,16 @@ describe('E2E: Full User Flow', () => {
     taskId = res.body.id;
   });
 
-  it('3. User submits a proof with photo', async () => {
+  it('3. User claims the task', async () => {
+    // Claims are enforced: a proof can only be submitted against a valid,
+    // unexpired claim on the task.
+    const res = await request(app)
+      .post(`/tasks/${taskId}/claim`)
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(201);
+  });
+
+  it('4. User submits a proof with photo', async () => {
     const res = await request(app)
       .post('/proofs')
       .set('Authorization', `Bearer ${userToken}`)
@@ -66,7 +75,7 @@ describe('E2E: Full User Flow', () => {
     proofId = res.body.id;
   });
 
-  it('4. Proof gets verified (poll until resolved)', async () => {
+  it('5. Proof gets verified (poll until resolved)', async () => {
     await new Promise((r) => setTimeout(r, 2000));
 
     const res = await request(app)
@@ -76,7 +85,7 @@ describe('E2E: Full User Flow', () => {
     expect(['APPROVED', 'VERIFYING']).toContain(res.body.status);
   });
 
-  it('5. Rewards are recorded', async () => {
+  it('6. Rewards are recorded', async () => {
     const res = await request(app)
       .get(`/users/${userId}/impact`)
       .set('Authorization', `Bearer ${userToken}`);
