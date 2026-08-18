@@ -3,6 +3,10 @@ import app from '../../src/app';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 
+jest.mock('../../src/services/auditService', () => ({
+  logAudit: jest.fn(),
+}));
+
 jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
