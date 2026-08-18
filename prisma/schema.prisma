@@ -72,6 +72,7 @@ model TaskClaim {
 
   user User @relation(fields: [userId], references: [id])
   task Task @relation(fields: [taskId], references: [id])
+  proofs Proof[]
 
   @@unique([taskId, userId])
   // getTaskClaims: WHERE task_id = ? AND status = 'active' AND expires_at > now()
@@ -84,6 +85,10 @@ model Proof {
   userId    String      @map("user_id")
   taskId    String      @map("task_id")
   status    ProofStatus @default(PENDING)
+  // The TaskClaim this proof was submitted under. NULL only for historical
+  // proofs created before claims were enforced (grandfathered, see migration
+  // 20260818010000_add_proof_claim_relation).
+  claimId   String?     @map("claim_id")
   lat       Float?
   lng       Float?
   notes     String?
@@ -93,6 +98,7 @@ model Proof {
 
   user       User          @relation(fields: [userId], references: [id])
   task       Task          @relation(fields: [taskId], references: [id])
+  claim      TaskClaim?    @relation(fields: [claimId], references: [id])
   photos     ProofPhoto[]
   verifications Verification[]
   validatorVotes ValidatorVote[]

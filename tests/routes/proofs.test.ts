@@ -12,6 +12,7 @@ jest.mock('../../src/utils/prisma', () => ({
   default: {
     task: { findUnique: jest.fn() },
     user: { findUnique: jest.fn() },
+    taskClaim: { findFirst: jest.fn() },
     proof: {
       create: jest.fn(),
       findUnique: jest.fn(),
@@ -62,6 +63,7 @@ import prisma from '../../src/utils/prisma';
 const mockPrisma = prisma as unknown as {
   task: { findUnique: jest.Mock };
   user: { findUnique: jest.Mock };
+  taskClaim: { findFirst: jest.Mock };
   proof: {
     create: jest.Mock;
     findUnique: jest.Mock;
@@ -89,8 +91,14 @@ function userToken(): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => {
-    for (const op of ops) await (op as Promise<unknown>);
+  mockPrisma.$transaction.mockImplementation(async (arg: unknown) => {
+    // Interactive-transaction form used by submitProof: the callback receives
+    // the mock client itself, so tx.task/tx.taskClaim/... hit the same mocks.
+    if (typeof arg === 'function') {
+      return (arg as (tx: unknown) => unknown)(mockPrisma);
+    }
+    const ops = arg as Promise<unknown>[];
+    for (const op of ops) await op;
     return [];
   });
 });
@@ -127,12 +135,14 @@ describe('Proof Routes', () => {
       expect(res.body.error).toBe('task is not active');
     });
 
-    it('returns 201 and creates proof with photo', async () => {
+    it('returns 201 and creates proof with photo tied to the active claim', async () => {
       mockPrisma.task.findUnique.mockResolvedValue({ id: 'task-1', status: 'ACTIVE' });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
       mockPrisma.proof.create.mockResolvedValue({
         id: 'proof-1',
         userId: 'user-id',
         taskId: 'task-1',
+        claimId: 'claim-1',
         status: 'PENDING',
       });
       mockPrisma.proof.findUnique.mockResolvedValue({
@@ -150,6 +160,21 @@ describe('Proof Routes', () => {
         .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
       expect(res.status).toBe(201);
       expect(res.body.status).toBe('PENDING');
+      expect(mockPrisma.taskClaim.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            taskId: VALID_UUID,
+            userId: 'user-id',
+            status: 'active',
+            expiresAt: { gt: expect.any(Date) },
+          },
+        }),
+      );
+      expect(mockPrisma.proof.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ claimId: 'claim-1' }),
+        }),
+      );
       expect(res.headers['x-request-id']).toBeDefined();
       const { enqueueVerification } = jest.requireMock(
         '../../src/workers/verificationWorker',
@@ -158,6 +183,41 @@ describe('Proof Routes', () => {
         'proof-1',
         res.headers['x-request-id'],
       );
+    });
+
+    it('rejects submission when the submitter holds no active claim', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({ id: 'task-1', status: 'ACTIVE' });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue(null);
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID);
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('active claim required to submit proof for this task');
+      expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects submission when the claim has expired, before the sweeper runs', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({ id: 'task-1', status: 'ACTIVE' });
+      // The claim row still has status 'active' (the background expiry sweeper
+      // has not run yet), but its expiresAt is in the past. Enforcement must
+      // happen at submit time, not only on the sweep.
+      mockPrisma.taskClaim.findFirst.mockResolvedValue(null);
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID);
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('active claim required to submit proof for this task');
+      expect(mockPrisma.taskClaim.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: 'active',
+            expiresAt: { gt: expect.any(Date) },
+          }),
+        }),
+      );
+      expect(mockPrisma.proof.create).not.toHaveBeenCalled();
     });
   });
 
@@ -270,6 +330,7 @@ describe('Proof Routes', () => {
         status: 'ACTIVE',
         maxCompletions: 5,
       });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
       mockPrisma.proof.count.mockResolvedValue(5);
       const res = await request(app)
         .post('/proofs')
@@ -286,11 +347,13 @@ describe('Proof Routes', () => {
         status: 'ACTIVE',
         maxCompletions: 5,
       });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
       mockPrisma.proof.count.mockResolvedValue(2);
       mockPrisma.proof.create.mockResolvedValue({
         id: 'proof-1',
         userId: 'user-id',
         taskId: 'task-1',
+        claimId: 'claim-1',
         status: 'PENDING',
       });
       mockPrisma.proof.findUnique.mockResolvedValue({
