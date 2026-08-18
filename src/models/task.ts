@@ -4,8 +4,8 @@ import { decodeCursor, encodeCursor } from '../utils/cursor.js';
 export interface TaskFilters {
   type?: string;
   status?: string;
-  minReward?: number;
-  maxReward?: number;
+  minRewardMicros?: bigint;
+  maxRewardMicros?: bigint;
   swLat?: number;
   swLng?: number;
   neLat?: number;
@@ -21,11 +21,11 @@ export async function listTasks(filters: TaskFilters = {}) {
   if (filters.type) where.type = filters.type;
   if (filters.status) where.status = filters.status;
 
-  if (filters.minReward != null || filters.maxReward != null) {
-    const rewardFilter: Record<string, number> = {};
-    if (filters.minReward != null) rewardFilter.gte = filters.minReward;
-    if (filters.maxReward != null) rewardFilter.lte = filters.maxReward;
-    where.rewardAmount = rewardFilter;
+  if (filters.minRewardMicros != null || filters.maxRewardMicros != null) {
+    const rewardFilter: Record<string, bigint> = {};
+    if (filters.minRewardMicros != null) rewardFilter.gte = filters.minRewardMicros;
+    if (filters.maxRewardMicros != null) rewardFilter.lte = filters.maxRewardMicros;
+    where.rewardAmountMicros = rewardFilter;
   }
 
   if (
@@ -85,7 +85,7 @@ export async function createTask(data: {
   title: string;
   description?: string;
   type: string;
-  rewardAmount: number;
+  rewardAmountMicros: bigint;
   lat: number;
   lng: number;
   radiusMeters?: number;
@@ -101,7 +101,7 @@ export async function updateTask(
     title?: string;
     description?: string;
     type?: string;
-    rewardAmount?: number;
+    rewardAmountMicros?: bigint;
     lat?: number;
     lng?: number;
     radiusMeters?: number;

@@ -46,12 +46,12 @@ export async function updateUser(
 export async function getUserImpact(id: string) {
   // Use raw SQL aggregation for true single-query performance with indexed columns
   const aggResult = await prisma.$queryRaw<
-    Array<{ task_type: string; proof_count: bigint; total_reward: number | null }>
+    Array<{ task_type: string; proof_count: bigint; total_reward_micros: bigint | null }>
   >`
     SELECT
       t.type as task_type,
       COUNT(*) as proof_count,
-      SUM(t.reward_amount) as total_reward
+      SUM(t.reward_amount_micros) as total_reward_micros
     FROM proofs p
     JOIN tasks t ON p.task_id = t.id
     WHERE p.user_id = ${id} AND p.status = 'APPROVED'
@@ -65,7 +65,7 @@ export async function getUserImpact(id: string) {
 
   aggResult.forEach((row) => {
     const count = Number(row.proof_count);
-    const reward = row.total_reward ?? 0;
+    const reward = Number(row.total_reward_micros ?? 0n) / 10000000;
 
     byType[row.task_type] = { count, reward };
     totalApproved += count;
