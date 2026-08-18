@@ -74,6 +74,8 @@ model TaskClaim {
   task Task @relation(fields: [taskId], references: [id])
 
   @@unique([taskId, userId])
+  // getTaskClaims: WHERE task_id = ? AND status = 'active' AND expires_at > now()
+  @@index([taskId, status])
   @@map("task_claims")
 }
 
@@ -95,7 +97,14 @@ model Proof {
   verifications Verification[]
   validatorVotes ValidatorVote[]
 
+  // Hot-path query shapes (see docs/index-verification.md):
+  //  - (user_id, status): getUserImpact aggregation
+  //  - (status, created_at): admin review queue listPendingProofs
+  //    (equality on status, sort on created_at)
+  //  - (task_id, status): capacity checks + completeTaskIfFull
   @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([taskId, status])
   @@map("proofs")
 }
 
@@ -111,7 +120,13 @@ model ProofPhoto {
 
   proof Proof @relation(fields: [proofId], references: [id])
 
-  @@index([sha256])
+  // FK join index for loading a proof's photos; the unique sha256 key
+  // already serves hash lookups, so the previous plain @@index([sha256])
+  // was redundant and has been dropped (see migration ...0008).
+  @@index([proofId])
+  // Covering index for the duplicate-photo check
+  // (WHERE sha256 IN (...) AND proofId != ?) — enables an index-only scan.
+  @@index([sha256, proofId])
   @@map("proof_photos")
 }
 
@@ -125,6 +140,9 @@ model Verification {
 
   proof Proof @relation(fields: [proofId], references: [id])
 
+  // FK join index: proofs are loaded with their verifications
+  // (GET /proofs/:id, review flows, verification worker).
+  @@index([proofId])
   @@map("verifications")
 }
 
@@ -161,6 +179,9 @@ model AuditLog {
   @@index([createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([resource, createdAt(sort: Desc)])
+  // getAuditLogs with both filters: WHERE "userId" = ? AND resource = ?
+  // ORDER BY "createdAt" DESC LIMIT ? OFFSET ?
+  @@index([userId, resource, createdAt(sort: Desc)])
   @@map("AuditLog")
 }
 
