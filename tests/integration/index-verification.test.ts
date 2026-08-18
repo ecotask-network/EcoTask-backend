@@ -36,7 +36,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (dbAvailable) {
-    // Remove only this run's rows, in FK-safe order.
+    // Remove only this run's rows, in FK-safe order. Generous timeout: the
+    // cleanup deletes ~8k proofs and their dependents while other test
+    // workers run in parallel.
     await prisma.$executeRawUnsafe(`DELETE FROM "proof_photos" WHERE id LIKE '${RUN}-%'`);
     await prisma.$executeRawUnsafe(
       `DELETE FROM "verifications" WHERE id LIKE '${RUN}-%'`,
@@ -48,7 +50,7 @@ afterAll(async () => {
     await prisma.$executeRawUnsafe(`DELETE FROM "User" WHERE id LIKE '${RUN}-%'`);
   }
   await prisma.$disconnect();
-});
+}, 120000);
 
 async function seed(): Promise<void> {
   const users = Array.from({ length: USERS }, (_, i) => ({
