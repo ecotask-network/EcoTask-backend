@@ -2,6 +2,7 @@ import request from 'supertest';
 import app from '../../src/app';
 import jwt from 'jsonwebtoken';
 import path from 'path';
+import fs from 'fs';
 
 jest.mock('../../src/services/auditService', () => ({
   logAudit: jest.fn(),
@@ -59,6 +60,9 @@ jest.mock('../../src/services/ipfsService', () => ({
 }));
 
 import prisma from '../../src/utils/prisma';
+import { uploadToIPFS } from '../../src/services/ipfsService';
+
+const mockUploadToIPFS = uploadToIPFS as jest.MockedFunction<typeof uploadToIPFS>;
 
 const mockPrisma = prisma as unknown as {
   task: { findUnique: jest.Mock };
@@ -172,9 +176,20 @@ describe('Proof Routes', () => {
       );
       expect(mockPrisma.proof.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ claimId: 'claim-1' }),
+          data: expect.objectContaining({
+            claimId: 'claim-1',
+            photos: {
+              create: [
+                expect.objectContaining({
+                  cid: 'mock-cid-test',
+                  filename: 'test-proof.jpg',
+                }),
+              ],
+            },
+          }),
         }),
       );
+      expect(mockPrisma.proofPhoto.create).not.toHaveBeenCalled();
       expect(res.headers['x-request-id']).toBeDefined();
       const { enqueueVerification } = jest.requireMock(
         '../../src/workers/verificationWorker',
@@ -183,6 +198,47 @@ describe('Proof Routes', () => {
         'proof-1',
         res.headers['x-request-id'],
       );
+    });
+
+    it('does not persist a proof and removes the temp file when photo processing fails', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        maxCompletions: null,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      mockPrisma.proof.count.mockResolvedValue(0);
+      mockPrisma.proof.create.mockResolvedValue({
+        id: 'proof-1',
+        userId: 'user-id',
+        taskId: 'task-1',
+        claimId: 'claim-1',
+        status: 'PENDING',
+      });
+
+      let uploadedPath: string | undefined;
+      mockUploadToIPFS.mockImplementationOnce(async (filePath: string) => {
+        uploadedPath = filePath;
+        throw new Error('IPFS unavailable');
+      });
+
+      try {
+        const res = await request(app)
+          .post('/proofs')
+          .set('Authorization', `Bearer ${userToken()}`)
+          .field('taskId', VALID_UUID)
+          .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
+
+        expect(res.status).toBe(500);
+        expect(res.body).toEqual({ error: 'failed to process proof photos' });
+        expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+        expect(uploadedPath).toBeDefined();
+        expect(fs.existsSync(uploadedPath!)).toBe(false);
+      } finally {
+        if (uploadedPath && fs.existsSync(uploadedPath)) {
+          fs.unlinkSync(uploadedPath);
+        }
+      }
     });
 
     it('rejects submission when the submitter holds no active claim', async () => {

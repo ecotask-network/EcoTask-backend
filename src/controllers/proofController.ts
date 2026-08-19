@@ -28,32 +28,165 @@ export async function submitProof(req: Request, res: Response) {
   const { taskId, lat: bodyLat, lng: bodyLng, notes } = parsed.data;
   const userId = req.user!.userId;
 
-  // ── Claim enforcement (issue #18) ───────────────────────────────────────────
-  // A proof may only be submitted against a valid, unexpired TaskClaim held by
-  // the submitter. Claim verification, capacity check, and proof creation all
-  // happen inside ONE transaction so a concurrent submit can never create a
-  // proof without a valid claim or race the capacity count. Expiry is enforced
-  // here at submit time (`expiresAt > now()`), not only by the background
-  // sweeper, so an expired claim is rejected even before the sweeper runs.
-  type SubmitResult =
+  type EligibilityResult =
     | { status: 404 | 400 | 403 | 409; error: string }
     | {
-        status: 201;
-        proof: {
-          id: string;
-          userId: string;
-          taskId: string;
-          claimId: string | null;
-          status: string;
-        };
+        status: 200;
         task: { lat: number; lng: number; radiusMeters: number };
       };
 
-  const result: SubmitResult = await prisma.$transaction(async (tx) => {
+  // Reject invalid submissions before doing expensive photo work. Eligibility
+  // is checked again in the write transaction below so capacity and claim
+  // validity cannot race with proof creation.
+  const eligibility: EligibilityResult = await prisma.$transaction(async (tx) => {
     const task = await tx.task.findUnique({ where: { id: taskId } });
     if (!task) {
       return { status: 404 as const, error: 'task not found' };
     }
+    if (task.status !== 'ACTIVE') {
+      return { status: 400 as const, error: 'task is not active' };
+    }
+
+    const claim = await tx.taskClaim.findFirst({
+      where: {
+        taskId,
+        userId,
+        status: 'active',
+        expiresAt: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+    if (!claim) {
+      return {
+        status: 403 as const,
+        error: 'active claim required to submit proof for this task',
+      };
+    }
+
+    if (task.maxCompletions != null) {
+      const completed = await tx.proof.count({
+        where: { taskId, status: 'APPROVED' },
+      });
+      if (completed >= task.maxCompletions) {
+        return { status: 409 as const, error: 'task has reached maximum completions' };
+      }
+    }
+
+    return { status: 200 as const, task };
+  });
+
+  if (eligibility.status !== 200) {
+    return res.status(eligibility.status).json({ error: eligibility.error });
+  }
+
+  let gpsFromPhoto: { lat: number; lng: number } | null = null;
+  const preparedPhotos: Array<{
+    cid: string;
+    filename: string;
+    sha256: string;
+    width: number | null;
+    height: number | null;
+    capturedAt: Date | null;
+  }> = [];
+
+  const files = req.files as Express.Multer.File[] | undefined;
+  if (files && files.length > 0) {
+    const fileResults = await Promise.allSettled(
+      files.map(async (file) => {
+        try {
+          const [sha256, metadata] = await Promise.all([
+            hashFile(file.path),
+            extractPhotoMetadata(file.path),
+          ]);
+          const cid = await uploadToIPFS(file.path, file.filename);
+
+          return {
+            photo: {
+              cid,
+              filename: file.originalname,
+              sha256,
+              width: metadata.width,
+              height: metadata.height,
+              capturedAt: metadata.capturedAt,
+            },
+            metadata,
+          };
+        } finally {
+          try {
+            await fs.promises.unlink(file.path);
+          } catch (err) {
+            logger.warn('Failed to clean up uploaded file', { err, path: file.path });
+          }
+        }
+      }),
+    );
+
+    const failedFile = fileResults.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failedFile) {
+      logger.error('Failed to process proof photos', {
+        err: failedFile.reason,
+        requestId: req.requestId,
+        taskId,
+        userId,
+      });
+      return res.status(500).json({ error: 'failed to process proof photos' });
+    }
+
+    for (const result of fileResults) {
+      if (result.status !== 'fulfilled') continue;
+      preparedPhotos.push(result.value.photo);
+      const { metadata } = result.value;
+      if (metadata.gpsLat != null && metadata.gpsLng != null) {
+        gpsFromPhoto ??= { lat: metadata.gpsLat, lng: metadata.gpsLng };
+      }
+    }
+  }
+
+  // ── GPS cross-check ─────────────────────────────────────────────────────────
+  // When the client supplies body coordinates AND the photo carries its own EXIF
+  // GPS, we verify they agree to within the task radius.  A mismatch means the
+  // submitted body coordinates may be spoofed: we store a flag and route the
+  // proof to manual validator review rather than trusting auto-verification.
+  let gpsMismatch = false;
+  if (bodyLat != null && bodyLng != null && gpsFromPhoto) {
+    const photoWithinRadius = isWithinZone(
+      gpsFromPhoto.lat,
+      gpsFromPhoto.lng,
+      eligibility.task.lat,
+      eligibility.task.lng,
+      eligibility.task.radiusMeters / 1000,
+    );
+    if (!photoWithinRadius) {
+      gpsMismatch = true;
+      logger.warn(
+        'GPS mismatch: body coordinates supplied but photo EXIF GPS is outside task radius',
+        {
+          bodyLat,
+          bodyLng,
+          photoLat: gpsFromPhoto.lat,
+          photoLng: gpsFromPhoto.lng,
+          taskLat: eligibility.task.lat,
+          taskLng: eligibility.task.lng,
+          radiusMeters: eligibility.task.radiusMeters,
+        },
+      );
+    }
+  }
+
+  // Persist effective coordinates (body GPS takes precedence for storage when
+  // there is no mismatch; photo GPS fills in when body is absent).
+  const effectiveLat = bodyLat ?? gpsFromPhoto?.lat ?? null;
+  const effectiveLng = bodyLng ?? gpsFromPhoto?.lng ?? null;
+
+  type PersistResult =
+    | { status: 404 | 400 | 403 | 409; error: string }
+    | { status: 201; proof: { id: string } };
+
+  const persisted: PersistResult = await prisma.$transaction(async (tx) => {
+    const task = await tx.task.findUnique({ where: { id: taskId } });
+    if (!task) return { status: 404 as const, error: 'task not found' };
     if (task.status !== 'ACTIVE') {
       return { status: 400 as const, error: 'task is not active' };
     }
@@ -89,133 +222,19 @@ export async function submitProof(req: Request, res: Response) {
         taskId,
         claimId: claim.id,
         status: 'PENDING',
-        notes,
+        notes: gpsMismatch ? 'gps_photo_mismatch' : notes,
+        lat: effectiveLat,
+        lng: effectiveLng,
+        photos: { create: preparedPhotos },
       },
     });
-    return { status: 201 as const, proof, task };
+    return { status: 201 as const, proof };
   });
 
-  if (result.status !== 201) {
-    return res.status(result.status).json({ error: result.error });
+  if (persisted.status !== 201) {
+    return res.status(persisted.status).json({ error: persisted.error });
   }
-  const { proof, task } = result;
-
-  // GPS extracted from the first photo (in original upload order) that
-  // carries EXIF GPS.  We collect it alongside width/height in a single
-  // extractPhotoMetadata pass — no separate EXIF load needed.
-  let gpsFromPhoto: { lat: number; lng: number } | null = null;
-
-  const files = req.files as Express.Multer.File[] | undefined;
-  if (files && files.length > 0) {
-    // Process all files concurrently rather than sequentially. Each file's
-    // hash/EXIF/upload/DB-write/cleanup pipeline is independent, so running
-    // them in parallel lets the non-blocking I/O (hashFile's stream read,
-    // extractPhotoMetadata's async read, uploadToIPFS's network call) for
-    // one file overlap with another instead of fully serializing. The
-    // upload route caps this at 5 files (`upload.array('photos', 5)`) with
-    // a 10MB-per-file limit (`limits.fileSize` in src/middleware/upload.ts),
-    // so per-request in-flight memory is already bounded (~50MB worst case)
-    // by the existing request schema — no additional concurrency limiting
-    // is introduced here.
-    //
-    // `Promise.all` settles results in the same order as the input array
-    // (not resolution order), so `fileResults[i]` always corresponds to
-    // `files[i]` — this lets us pick the GPS-bearing photo deterministically
-    // by original upload order below, rather than by whichever promise
-    // happens to settle first.
-    const fileResults = await Promise.all(
-      files.map(async (file) => {
-        const [sha256, metadata] = await Promise.all([
-          hashFile(file.path),
-          extractPhotoMetadata(file.path),
-        ]);
-
-        const cid = await uploadToIPFS(file.path, file.filename);
-
-        await prisma.proofPhoto.create({
-          data: {
-            proofId: proof.id,
-            cid,
-            filename: file.originalname,
-            sha256,
-            width: metadata.width,
-            height: metadata.height,
-            capturedAt: metadata.capturedAt,
-          },
-        });
-
-        fs.promises.unlink(file.path).catch((err) => {
-          logger.warn('Failed to clean up uploaded file', {
-            err,
-            path: file.path,
-          });
-        });
-
-        return metadata;
-      }),
-    );
-
-    // Deterministic pass over original file order — pick the first photo
-    // with EXIF GPS, regardless of which underlying promise settled first.
-    for (const metadata of fileResults) {
-      if (metadata.gpsLat != null && metadata.gpsLng != null) {
-        gpsFromPhoto = { lat: metadata.gpsLat, lng: metadata.gpsLng };
-        break;
-      }
-    }
-  }
-
-  // ── GPS cross-check ─────────────────────────────────────────────────────────
-  // When the client supplies body coordinates AND the photo carries its own EXIF
-  // GPS, we verify they agree to within the task radius.  A mismatch means the
-  // submitted body coordinates may be spoofed: we store a flag and route the
-  // proof to manual validator review rather than trusting auto-verification.
-  let gpsMismatch = false;
-  if (bodyLat != null && bodyLng != null && gpsFromPhoto) {
-    const photoWithinRadius = isWithinZone(
-      gpsFromPhoto.lat,
-      gpsFromPhoto.lng,
-      task.lat,
-      task.lng,
-      task.radiusMeters / 1000,
-    );
-    if (!photoWithinRadius) {
-      gpsMismatch = true;
-      logger.warn(
-        'GPS mismatch: body coordinates supplied but photo EXIF GPS is outside task radius',
-        {
-          proofId: proof.id,
-          bodyLat,
-          bodyLng,
-          photoLat: gpsFromPhoto.lat,
-          photoLng: gpsFromPhoto.lng,
-          taskLat: task.lat,
-          taskLng: task.lng,
-          radiusMeters: task.radiusMeters,
-        },
-      );
-    }
-  }
-
-  // Persist effective coordinates (body GPS takes precedence for storage when
-  // there is no mismatch; photo GPS fills in when body is absent).
-  const effectiveLat = bodyLat ?? gpsFromPhoto?.lat ?? null;
-  const effectiveLng = bodyLng ?? gpsFromPhoto?.lng ?? null;
-
-  const proofUpdateData: { lat?: number; lng?: number; notes?: string } = {};
-  if (effectiveLat !== null && effectiveLng !== null) {
-    proofUpdateData.lat = effectiveLat;
-    proofUpdateData.lng = effectiveLng;
-  }
-  if (gpsMismatch) {
-    proofUpdateData.notes = 'gps_photo_mismatch';
-  }
-  if (Object.keys(proofUpdateData).length > 0) {
-    await prisma.proof.update({
-      where: { id: proof.id },
-      data: proofUpdateData,
-    });
-  }
+  const { proof } = persisted;
 
   // Only enqueue auto-verification when GPS is consistent.  A mismatch leaves
   // the proof in PENDING status for manual validator review.
