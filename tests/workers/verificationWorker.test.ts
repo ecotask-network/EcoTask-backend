@@ -46,7 +46,7 @@ jest.mock('../../src/utils/prisma', () => ({
 }));
 
 jest.mock('../../src/models/task', () => ({
-  completeTaskIfFull: jest.fn().mockResolvedValue(false),
+  claimCompletionSlot: jest.fn().mockResolvedValue({ claimed: true, taskCompleted: false }),
 }));
 
 jest.mock('../../src/workers/rewardWorker', () => ({
@@ -158,10 +158,10 @@ describe('Verification Worker', () => {
     };
     autoVerify.mockResolvedValue({ verdict: 'approved', confidence: 0.9, notes: 'ok' });
 
-    const { completeTaskIfFull } = jest.requireMock('../../src/models/task') as {
-      completeTaskIfFull: jest.Mock;
+    const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+      claimCompletionSlot: jest.Mock;
     };
-    completeTaskIfFull.mockResolvedValue(true);
+    claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: true });
     const { enqueueRewardPayout } = jest.requireMock(
       '../../src/workers/rewardWorker',
     ) as {
@@ -185,7 +185,7 @@ describe('Verification Worker', () => {
       where: { id: 'proof-1' },
       data: { status: 'APPROVED' },
     });
-    expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
+    expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
 
     // The proof status update, the Verification record and the notification
     // are all committed inside the same interactive transaction so a crash

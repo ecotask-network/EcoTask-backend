@@ -52,6 +52,7 @@ model Task {
   lng       Float
   radiusMeters Float  @default(100) @map("radius_meters")
   maxCompletions Int?   @map("max_completions")
+  completedCount Int    @default(0) @map("completed_count")
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
@@ -131,7 +132,7 @@ model ProofPhoto {
   // was redundant and has been dropped (see migration ...0008).
   @@index([proofId])
   // Covering index for the duplicate-photo check
-  // (WHERE sha256 IN (...) AND proofId != ?) — enables an index-only scan.
+  // (WHERE sha256 IN (...) AND proofId != ?) â€” enables an index-only scan.
   @@index([sha256, proofId])
   @@map("proof_photos")
 }

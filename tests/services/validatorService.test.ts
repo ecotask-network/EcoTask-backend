@@ -31,7 +31,7 @@ jest.mock('../../src/services/notificationService', () => ({
 }));
 
 jest.mock('../../src/models/task', () => ({
-  completeTaskIfFull: jest.fn().mockResolvedValue(false),
+  claimCompletionSlot: jest.fn().mockResolvedValue({ claimed: true, taskCompleted: false }),
 }));
 
 jest.mock('../../src/workers/rewardWorker', () => ({
@@ -196,6 +196,7 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce(
         votesProof(['approved', 'approved', null]),
       );
+      mockPrisma.proof.findUnique.mockResolvedValueOnce({ taskId: 'task-1' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
@@ -208,9 +209,10 @@ describe('ValidatorService', () => {
       ) as {
         notifyProofStatus: jest.Mock;
       };
-      const { completeTaskIfFull } = jest.requireMock('../../src/models/task') as {
-        completeTaskIfFull: jest.Mock;
+      const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+        claimCompletionSlot: jest.Mock;
       };
+      claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: true });
       const { enqueueRewardPayout } = jest.requireMock(
         '../../src/workers/rewardWorker',
       ) as {
@@ -231,7 +233,7 @@ describe('ValidatorService', () => {
         mockPrisma,
         'request-1',
       );
-      expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
       expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1', 'request-1');
     });
 
@@ -247,12 +249,18 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce(
         votesProof(['approved', 'approved', 'rejected']),
       );
+      mockPrisma.proof.findUnique.mockResolvedValueOnce({ taskId: 'task-1' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
       });
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.update.mockResolvedValue({});
+
+      const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+        claimCompletionSlot: jest.Mock;
+      };
+      claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: false });
 
       await castVote('proof-1', 'v1', 'approved');
 
@@ -311,6 +319,7 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce(
         votesProof(['rejected', 'rejected', null]),
       );
+      mockPrisma.proof.findUnique.mockResolvedValueOnce({ taskId: 'task-1' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
