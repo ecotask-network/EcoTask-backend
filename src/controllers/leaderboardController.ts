@@ -19,19 +19,19 @@ export async function getLeaderboard(req: Request, res: Response) {
 
   const proofs = await prisma.proof.findMany({
     where,
-    select: { userId: true, task: { select: { rewardAmount: true } } },
+    select: { userId: true, task: { select: { rewardAmountMicros: true } } },
   });
 
-  const aggregates = new Map<string, { count: number; reward: number }>();
+  const aggregates = new Map<string, { count: number; rewardMicros: bigint }>();
   for (const proof of proofs) {
-    const agg = aggregates.get(proof.userId) ?? { count: 0, reward: 0 };
+    const agg = aggregates.get(proof.userId) ?? { count: 0, rewardMicros: 0n };
     agg.count += 1;
-    agg.reward += proof.task.rewardAmount;
+    agg.rewardMicros += proof.task.rewardAmountMicros;
     aggregates.set(proof.userId, agg);
   }
 
   const ranked = [...aggregates.entries()].sort(
-    (a, b) => b[1].count - a[1].count || b[1].reward - a[1].reward,
+    (a, b) => b[1].count - a[1].count || Number(b[1].rewardMicros - a[1].rewardMicros),
   );
 
   const userIds = ranked.slice(0, limit).map(([userId]) => userId);
@@ -52,7 +52,7 @@ export async function getLeaderboard(req: Request, res: Response) {
     name: userMap.get(userId)?.name || null,
     avatarUrl: userMap.get(userId)?.avatarUrl || null,
     approvedProofs: agg.count,
-    totalReward: agg.reward,
+    totalReward: Number(agg.rewardMicros) / 10000000,
   }));
 
   res.json({ leaderboard, period });

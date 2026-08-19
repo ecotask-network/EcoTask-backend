@@ -66,7 +66,7 @@ function approvedProof(overrides: Record<string, unknown> = {}) {
     status: 'APPROVED',
     rewardedAt: null,
     user: { wallet: 'GC...' },
-    task: { rewardAmount: 50, rewardToken: 'ECO' },
+    task: { rewardAmountMicros: 500000000n, rewardToken: 'ECO' },
     ...overrides,
   };
 }
@@ -127,7 +127,7 @@ describe('Reward Worker', () => {
     expect(mockSubmitReward).toHaveBeenCalledWith({
       userWallet: 'GC...',
       taskId: 'task-1',
-      amount: 50,
+      amount: '500000000',
       assetCode: 'ECO',
     });
     expect(mockPrisma.proof.update).toHaveBeenCalledWith(

@@ -27,7 +27,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     lng: 36.8219,
     radiusMeters: 100,
     expiresAt: null,
-    rewardAmount: 50,
+    rewardAmountMicros: 500000000n,
     rewardToken: 'ECO',
     ...overrides,
   };

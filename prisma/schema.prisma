@@ -46,12 +46,13 @@ model Task {
   title     String
   description String?
   type      String
-  rewardAmount Float  @map("reward_amount")
+  rewardAmountMicros BigInt  @map("reward_amount_micros")
   rewardToken String? @map("reward_token")
   lat       Float
   lng       Float
   radiusMeters Float  @default(100) @map("radius_meters")
   maxCompletions Int?   @map("max_completions")
+  completedCount Int    @default(0) @map("completed_count")
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
@@ -72,8 +73,11 @@ model TaskClaim {
 
   user User @relation(fields: [userId], references: [id])
   task Task @relation(fields: [taskId], references: [id])
+  proofs Proof[]
 
   @@unique([taskId, userId])
+  // getTaskClaims: WHERE task_id = ? AND status = 'active' AND expires_at > now()
+  @@index([taskId, status])
   @@map("task_claims")
 }
 
@@ -82,6 +86,10 @@ model Proof {
   userId    String      @map("user_id")
   taskId    String      @map("task_id")
   status    ProofStatus @default(PENDING)
+  // The TaskClaim this proof was submitted under. NULL only for historical
+  // proofs created before claims were enforced (grandfathered, see migration
+  // 20260818010000_add_proof_claim_relation).
+  claimId   String?     @map("claim_id")
   lat       Float?
   lng       Float?
   notes     String?
@@ -91,11 +99,19 @@ model Proof {
 
   user       User          @relation(fields: [userId], references: [id])
   task       Task          @relation(fields: [taskId], references: [id])
+  claim      TaskClaim?    @relation(fields: [claimId], references: [id])
   photos     ProofPhoto[]
   verifications Verification[]
   validatorVotes ValidatorVote[]
 
+  // Hot-path query shapes (see docs/index-verification.md):
+  //  - (user_id, status): getUserImpact aggregation
+  //  - (status, created_at): admin review queue listPendingProofs
+  //    (equality on status, sort on created_at)
+  //  - (task_id, status): capacity checks + completeTaskIfFull
   @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([taskId, status])
   @@map("proofs")
 }
 
@@ -111,7 +127,13 @@ model ProofPhoto {
 
   proof Proof @relation(fields: [proofId], references: [id])
 
-  @@index([sha256])
+  // FK join index for loading a proof's photos; the unique sha256 key
+  // already serves hash lookups, so the previous plain @@index([sha256])
+  // was redundant and has been dropped (see migration ...0008).
+  @@index([proofId])
+  // Covering index for the duplicate-photo check
+  // (WHERE sha256 IN (...) AND proofId != ?) â€” enables an index-only scan.
+  @@index([sha256, proofId])
   @@map("proof_photos")
 }
 
@@ -125,6 +147,9 @@ model Verification {
 
   proof Proof @relation(fields: [proofId], references: [id])
 
+  // FK join index: proofs are loaded with their verifications
+  // (GET /proofs/:id, review flows, verification worker).
+  @@index([proofId])
   @@map("verifications")
 }
 
@@ -161,6 +186,9 @@ model AuditLog {
   @@index([createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([resource, createdAt(sort: Desc)])
+  // getAuditLogs with both filters: WHERE "userId" = ? AND resource = ?
+  // ORDER BY "createdAt" DESC LIMIT ? OFFSET ?
+  @@index([userId, resource, createdAt(sort: Desc)])
   @@map("AuditLog")
 }
 
