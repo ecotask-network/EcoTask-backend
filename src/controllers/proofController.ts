@@ -14,7 +14,7 @@ import { hashFile, extractPhotoMetadata } from '../services/photoService.js';
 import { notifyProofStatus } from '../services/notificationService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
 import { enqueueRewardPayout } from '../workers/rewardWorker.js';
-import { completeTaskIfFull } from '../models/task.js';
+import { claimCompletionSlot } from '../models/task.js';
 import logger from '../utils/logger.js';
 import { cleanupUploadedFiles } from '../middleware/upload.js';
 
@@ -60,13 +60,8 @@ async function checkSubmissionEligibility(
     };
   }
 
-  if (task.maxCompletions != null) {
-    const completed = await tx.proof.count({
-      where: { taskId, status: 'APPROVED' },
-    });
-    if (completed >= task.maxCompletions) {
-      return { status: 409, error: 'task has reached maximum completions' };
-    }
+  if (task.maxCompletions != null && task.completedCount >= task.maxCompletions) {
+    return { status: 409, error: 'task has reached maximum completions' };
   }
 
   return { status: 200, task, claimId: claim.id };
@@ -323,28 +318,42 @@ export async function reviewProof(req: Request, res: Response) {
     return res.status(409).json({ error: 'proof already has a final verdict' });
   }
 
-  const status = parsed.data.verdict === 'approved' ? 'APPROVED' : 'REJECTED';
+  const requestedStatus = parsed.data.verdict === 'approved' ? 'APPROVED' : 'REJECTED';
 
-  await prisma.$transaction([
-    prisma.proof.update({ where: { id: proof.id }, data: { status } }),
-    prisma.verification.create({
+  const { finalStatus, taskCompleted } = await prisma.$transaction(async (tx) => {
+    let finalStatus: 'APPROVED' | 'REJECTED' = requestedStatus;
+    let taskCompleted = false;
+    let notes = parsed.data.notes;
+
+    if (requestedStatus === 'APPROVED') {
+      const slot = await claimCompletionSlot(tx, proof.taskId);
+      if (!slot.claimed) {
+        finalStatus = 'REJECTED';
+        notes = `${notes ?? ''} [auto-rejected: task reached max completions]`.trim();
+      } else {
+        taskCompleted = slot.taskCompleted;
+      }
+    }
+
+    await tx.proof.update({ where: { id: proof.id }, data: { status: finalStatus } });
+    await tx.verification.create({
       data: {
         proofId: proof.id,
         verifierId: req.user!.userId,
         verdict: parsed.data.verdict,
-        notes: parsed.data.notes,
+        notes,
       },
-    }),
-  ]);
+    });
 
-  await notifyProofStatus(proof.userId, proof.id, status, req.requestId);
+    return { finalStatus, taskCompleted };
+  });
 
-  if (status === 'APPROVED') {
-    const completed = await completeTaskIfFull(proof.taskId);
-    if (completed) {
+  await notifyProofStatus(proof.userId, proof.id, finalStatus, req.requestId);
+
+  if (finalStatus === 'APPROVED') {
+    if (taskCompleted) {
       logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
     }
-
     await enqueueRewardPayout(proof.id, req.requestId);
   }
 

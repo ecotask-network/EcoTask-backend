@@ -2,7 +2,7 @@ import { Worker, Queue } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
 import { assignValidators } from '../services/validatorService';
-import { completeTaskIfFull } from '../models/task';
+import { claimCompletionSlot } from '../models/task';
 import { enqueueRewardPayout } from './rewardWorker';
 import config from '../config/default';
 import IORedis from 'ioredis';
@@ -72,35 +72,55 @@ const worker = new Worker<VerificationJobData>(
       const result = await autoVerify(proofId);
 
       if (result.verdict === 'approved') {
-        await prisma.$transaction(async (tx) => {
+        const { finalStatus, taskCompleted } = await prisma.$transaction(async (tx) => {
+          let finalStatus: 'APPROVED' | 'REJECTED' = 'APPROVED';
+          let taskCompleted = false;
+          let notes = result.notes || `confidence: ${result.confidence}`;
+
+          const slot = await claimCompletionSlot(tx, proof.taskId);
+          if (!slot.claimed) {
+            finalStatus = 'REJECTED';
+            notes += ' [auto-rejected: task reached max completions]';
+          } else {
+            taskCompleted = slot.taskCompleted;
+          }
+
           await tx.proof.update({
             where: { id: proofId },
-            data: { status: 'APPROVED' },
+            data: { status: finalStatus },
           });
           await tx.verification.create({
             data: {
               proofId,
               verifierId: 'auto-verifier',
               verdict: result.verdict,
-              notes: result.notes || `confidence: ${result.confidence}`,
+              notes,
             },
           });
           if (requestId) {
-            await notifyProofStatus(proof.userId, proofId, 'APPROVED', tx, requestId);
+            await notifyProofStatus(proof.userId, proofId, finalStatus, tx, requestId);
           } else {
-            await notifyProofStatus(proof.userId, proofId, 'APPROVED', tx);
+            await notifyProofStatus(proof.userId, proofId, finalStatus, tx);
           }
+
+          return { finalStatus, taskCompleted };
         });
 
-        const completed = await completeTaskIfFull(proof.taskId);
-        if (completed) {
-          logger.info('Task reached capacity and was completed', {
+        if (finalStatus === 'APPROVED') {
+          if (taskCompleted) {
+            logger.info('Task reached capacity and was completed', {
+              taskId: proof.taskId,
+              ...requestMeta,
+            });
+          }
+          await enqueueRewardPayout(proofId, requestId);
+        } else {
+          logger.info('Auto-approved proof rejected: task at capacity', {
+            proofId,
             taskId: proof.taskId,
             ...requestMeta,
           });
         }
-
-        await enqueueRewardPayout(proofId, requestId);
       } else if (result.verdict === 'rejected') {
         await prisma.$transaction(async (tx) => {
           await tx.proof.update({

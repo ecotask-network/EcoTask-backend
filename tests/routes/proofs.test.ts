@@ -37,7 +37,7 @@ jest.mock('../../src/workers/rewardWorker', () => ({
 }));
 
 jest.mock('../../src/models/task', () => ({
-  completeTaskIfFull: jest.fn().mockResolvedValue(false),
+  claimCompletionSlot: jest.fn().mockResolvedValue({ claimed: true, taskCompleted: false }),
 }));
 
 jest.mock('../../src/services/notificationService', () => ({
@@ -512,9 +512,9 @@ describe('Proof Routes', () => {
         id: 'task-1',
         status: 'ACTIVE',
         maxCompletions: 5,
+        completedCount: 5,
       });
       mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
-      mockPrisma.proof.count.mockResolvedValue(5);
       const res = await request(app)
         .post('/proofs')
         .set('Authorization', `Bearer ${userToken()}`)
@@ -529,9 +529,9 @@ describe('Proof Routes', () => {
         id: 'task-1',
         status: 'ACTIVE',
         maxCompletions: 5,
+        completedCount: 2,
       });
       mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
-      mockPrisma.proof.count.mockResolvedValue(2);
       mockPrisma.proof.create.mockResolvedValue({
         id: 'proof-1',
         userId: 'user-id',
@@ -682,10 +682,10 @@ describe('Proof Routes', () => {
         verifications: [],
       });
 
-      const { completeTaskIfFull } = jest.requireMock('../../src/models/task') as {
-        completeTaskIfFull: jest.Mock;
+      const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+        claimCompletionSlot: jest.Mock;
       };
-      completeTaskIfFull.mockResolvedValue(true);
+      claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: true });
       const { enqueueRewardPayout } = jest.requireMock(
         '../../src/workers/rewardWorker',
       ) as { enqueueRewardPayout: jest.Mock };
@@ -696,7 +696,7 @@ describe('Proof Routes', () => {
         .send({ verdict: 'approved' });
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('APPROVED');
-      expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
       expect(enqueueRewardPayout).toHaveBeenCalledWith(
         'proof-1',
         res.headers['x-request-id'],

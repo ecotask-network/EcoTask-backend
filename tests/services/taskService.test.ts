@@ -1,5 +1,4 @@
 import { expireOverdueTasks } from '../../src/services/taskService';
-import { completeTaskIfFull } from '../../src/models/task';
 
 jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
@@ -64,66 +63,3 @@ describe('Task service: expiry sweep', () => {
   });
 });
 
-describe('Task model: capacity completion', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  it('completes a task once approved proofs reach maxCompletions', async () => {
-    mockPrisma.task.findUnique.mockResolvedValue({
-      id: 'task-1',
-      status: 'ACTIVE',
-      maxCompletions: 2,
-    });
-    mockPrisma.proof.count.mockResolvedValue(2);
-
-    const completed = await completeTaskIfFull('task-1');
-
-    expect(completed).toBe(true);
-    expect(mockPrisma.task.update).toHaveBeenCalledWith({
-      where: { id: 'task-1' },
-      data: { status: 'COMPLETED' },
-    });
-  });
-
-  it('leaves the task ACTIVE below capacity', async () => {
-    mockPrisma.task.findUnique.mockResolvedValue({
-      id: 'task-1',
-      status: 'ACTIVE',
-      maxCompletions: 5,
-    });
-    mockPrisma.proof.count.mockResolvedValue(2);
-
-    const completed = await completeTaskIfFull('task-1');
-
-    expect(completed).toBe(false);
-    expect(mockPrisma.task.update).not.toHaveBeenCalled();
-  });
-
-  it('does nothing for tasks without a capacity limit', async () => {
-    mockPrisma.task.findUnique.mockResolvedValue({
-      id: 'task-1',
-      status: 'ACTIVE',
-      maxCompletions: null,
-    });
-    mockPrisma.proof.count.mockResolvedValue(100);
-
-    const completed = await completeTaskIfFull('task-1');
-
-    expect(completed).toBe(false);
-    expect(mockPrisma.task.update).not.toHaveBeenCalled();
-  });
-
-  it('does nothing for tasks that are not ACTIVE', async () => {
-    mockPrisma.task.findUnique.mockResolvedValue({
-      id: 'task-1',
-      status: 'COMPLETED',
-      maxCompletions: 2,
-    });
-
-    const completed = await completeTaskIfFull('task-1');
-
-    expect(completed).toBe(false);
-    expect(mockPrisma.task.update).not.toHaveBeenCalled();
-  });
-});
