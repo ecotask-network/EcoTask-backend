@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import fs from 'fs';
+import { NextFunction, Request, Response } from 'express';
+import type { Prisma } from '@prisma/client';
 import prisma from '../utils/prisma.js';
 import {
   submitProofSchema,
@@ -16,219 +16,230 @@ import { enqueueVerification } from '../workers/verificationWorker.js';
 import { enqueueRewardPayout } from '../workers/rewardWorker.js';
 import { completeTaskIfFull } from '../models/task.js';
 import logger from '../utils/logger.js';
+import { cleanupUploadedFiles } from '../middleware/upload.js';
 
-export async function submitProof(req: Request, res: Response) {
-  const parsed = submitProofSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res
-      .status(400)
-      .json({ error: 'invalid request body', details: parsed.error.flatten() });
+type SubmissionEligibility =
+  | { status: 404 | 400 | 403 | 409; error: string }
+  | {
+      status: 200;
+      task: {
+        id: string;
+        lat: number;
+        lng: number;
+        radiusMeters: number;
+      };
+      claimId: string;
+    };
+
+async function checkSubmissionEligibility(
+  tx: Prisma.TransactionClient,
+  taskId: string,
+  userId: string,
+): Promise<SubmissionEligibility> {
+  const task = await tx.task.findUnique({ where: { id: taskId } });
+  if (!task) {
+    return { status: 404, error: 'task not found' };
+  }
+  if (task.status !== 'ACTIVE') {
+    return { status: 400, error: 'task is not active' };
   }
 
-  const { taskId, lat: bodyLat, lng: bodyLng, notes } = parsed.data;
-  const userId = req.user!.userId;
-
-  // ── Claim enforcement (issue #18) ───────────────────────────────────────────
-  // A proof may only be submitted against a valid, unexpired TaskClaim held by
-  // the submitter. Claim verification, capacity check, and proof creation all
-  // happen inside ONE transaction so a concurrent submit can never create a
-  // proof without a valid claim or race the capacity count. Expiry is enforced
-  // here at submit time (`expiresAt > now()`), not only by the background
-  // sweeper, so an expired claim is rejected even before the sweeper runs.
-  type SubmitResult =
-    | { status: 404 | 400 | 403 | 409; error: string }
-    | {
-        status: 201;
-        proof: {
-          id: string;
-          userId: string;
-          taskId: string;
-          claimId: string | null;
-          status: string;
-        };
-        task: { lat: number; lng: number; radiusMeters: number };
-      };
-
-  const result: SubmitResult = await prisma.$transaction(async (tx) => {
-    const task = await tx.task.findUnique({ where: { id: taskId } });
-    if (!task) {
-      return { status: 404 as const, error: 'task not found' };
-    }
-    if (task.status !== 'ACTIVE') {
-      return { status: 400 as const, error: 'task is not active' };
-    }
-
-    const claim = await tx.taskClaim.findFirst({
-      where: {
-        taskId,
-        userId,
-        status: 'active',
-        expiresAt: { gt: new Date() },
-      },
-      select: { id: true },
-    });
-    if (!claim) {
-      return {
-        status: 403 as const,
-        error: 'active claim required to submit proof for this task',
-      };
-    }
-
-    if (task.maxCompletions != null) {
-      const completed = await tx.proof.count({
-        where: { taskId, status: 'APPROVED' },
-      });
-      if (completed >= task.maxCompletions) {
-        return { status: 409 as const, error: 'task has reached maximum completions' };
-      }
-    }
-
-    const proof = await tx.proof.create({
-      data: {
-        userId,
-        taskId,
-        claimId: claim.id,
-        status: 'PENDING',
-        notes,
-      },
-    });
-    return { status: 201 as const, proof, task };
+  const claim = await tx.taskClaim.findFirst({
+    where: {
+      taskId,
+      userId,
+      status: 'active',
+      expiresAt: { gt: new Date() },
+    },
+    select: { id: true },
   });
-
-  if (result.status !== 201) {
-    return res.status(result.status).json({ error: result.error });
+  if (!claim) {
+    return {
+      status: 403,
+      error: 'active claim required to submit proof for this task',
+    };
   }
-  const { proof, task } = result;
 
-  // GPS extracted from the first photo (in original upload order) that
-  // carries EXIF GPS.  We collect it alongside width/height in a single
-  // extractPhotoMetadata pass — no separate EXIF load needed.
-  let gpsFromPhoto: { lat: number; lng: number } | null = null;
+  if (task.maxCompletions != null) {
+    const completed = await tx.proof.count({
+      where: { taskId, status: 'APPROVED' },
+    });
+    if (completed >= task.maxCompletions) {
+      return { status: 409, error: 'task has reached maximum completions' };
+    }
+  }
 
+  return { status: 200, task, claimId: claim.id };
+}
+
+export async function submitProof(req: Request, res: Response, next: NextFunction) {
   const files = req.files as Express.Multer.File[] | undefined;
-  if (files && files.length > 0) {
-    // Process all files concurrently rather than sequentially. Each file's
-    // hash/EXIF/upload/DB-write/cleanup pipeline is independent, so running
-    // them in parallel lets the non-blocking I/O (hashFile's stream read,
-    // extractPhotoMetadata's async read, uploadToIPFS's network call) for
-    // one file overlap with another instead of fully serializing. The
-    // upload route caps this at 5 files (`upload.array('photos', 5)`) with
-    // a 10MB-per-file limit (`limits.fileSize` in src/middleware/upload.ts),
-    // so per-request in-flight memory is already bounded (~50MB worst case)
-    // by the existing request schema — no additional concurrency limiting
-    // is introduced here.
-    //
-    // `Promise.all` settles results in the same order as the input array
-    // (not resolution order), so `fileResults[i]` always corresponds to
-    // `files[i]` — this lets us pick the GPS-bearing photo deterministically
-    // by original upload order below, rather than by whichever promise
-    // happens to settle first.
-    const fileResults = await Promise.all(
-      files.map(async (file) => {
-        const [sha256, metadata] = await Promise.all([
-          hashFile(file.path),
-          extractPhotoMetadata(file.path),
-        ]);
+  let filesCleaned = false;
+  const cleanupFiles = async () => {
+    if (filesCleaned) return;
+    filesCleaned = true;
+    await cleanupUploadedFiles(files);
+  };
+  const respond = async (status: number, body: unknown) => {
+    await cleanupFiles();
+    return res.status(status).json(body);
+  };
 
-        const cid = await uploadToIPFS(file.path, file.filename);
+  try {
+    const parsed = submitProofSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return respond(400, {
+        error: 'invalid request body',
+        details: parsed.error.flatten(),
+      });
+    }
 
-        await prisma.proofPhoto.create({
-          data: {
-            proofId: proof.id,
+    const { taskId, lat: bodyLat, lng: bodyLng, notes } = parsed.data;
+    const userId = req.user!.userId;
+    const preflight = await prisma.$transaction((tx) =>
+      checkSubmissionEligibility(tx, taskId, userId),
+    );
+    if (preflight.status !== 200) {
+      return respond(preflight.status, { error: preflight.error });
+    }
+
+    const preparedPhotos: Array<{
+      cid: string;
+      filename: string;
+      sha256: string;
+      width: number | null;
+      height: number | null;
+      capturedAt: Date | null;
+      gpsLat: number | null;
+      gpsLng: number | null;
+    }> = [];
+    try {
+      // IPFS is external to the database transaction. Prepare every CID first;
+      // if any preparation fails, no proof or photo row becomes visible.
+      const photoResults = await Promise.allSettled(
+        (files ?? []).map(async (file) => {
+          const [sha256, metadata] = await Promise.all([
+            hashFile(file.path),
+            extractPhotoMetadata(file.path),
+          ]);
+          const cid = await uploadToIPFS(file.path, file.filename);
+          return {
             cid,
             filename: file.originalname,
             sha256,
             width: metadata.width,
             height: metadata.height,
             capturedAt: metadata.capturedAt,
-          },
-        });
+            gpsLat: metadata.gpsLat,
+            gpsLng: metadata.gpsLng,
+          };
+        }),
+      );
 
-        fs.promises.unlink(file.path).catch((err) => {
-          logger.warn('Failed to clean up uploaded file', {
-            err,
-            path: file.path,
-          });
-        });
+      for (const result of photoResults) {
+        if (result.status === 'rejected') throw result.reason;
+        preparedPhotos.push(result.value);
+      }
+    } catch (err) {
+      logger.error('Proof photo processing failed', {
+        err,
+        taskId,
+        userId,
+        requestId: req.requestId,
+      });
+      return respond(500, { error: 'failed to process proof photos' });
+    }
 
-        return metadata;
-      }),
-    );
-
-    // Deterministic pass over original file order — pick the first photo
-    // with EXIF GPS, regardless of which underlying promise settled first.
-    for (const metadata of fileResults) {
-      if (metadata.gpsLat != null && metadata.gpsLng != null) {
-        gpsFromPhoto = { lat: metadata.gpsLat, lng: metadata.gpsLng };
+    let gpsFromPhoto: { lat: number; lng: number } | null = null;
+    for (const photo of preparedPhotos) {
+      if (photo.gpsLat != null && photo.gpsLng != null) {
+        gpsFromPhoto = { lat: photo.gpsLat, lng: photo.gpsLng };
         break;
       }
     }
-  }
 
-  // ── GPS cross-check ─────────────────────────────────────────────────────────
-  // When the client supplies body coordinates AND the photo carries its own EXIF
-  // GPS, we verify they agree to within the task radius.  A mismatch means the
-  // submitted body coordinates may be spoofed: we store a flag and route the
-  // proof to manual validator review rather than trusting auto-verification.
-  let gpsMismatch = false;
-  if (bodyLat != null && bodyLng != null && gpsFromPhoto) {
-    const photoWithinRadius = isWithinZone(
-      gpsFromPhoto.lat,
-      gpsFromPhoto.lng,
-      task.lat,
-      task.lng,
-      task.radiusMeters / 1000,
-    );
-    if (!photoWithinRadius) {
-      gpsMismatch = true;
-      logger.warn(
-        'GPS mismatch: body coordinates supplied but photo EXIF GPS is outside task radius',
-        {
-          proofId: proof.id,
-          bodyLat,
-          bodyLng,
-          photoLat: gpsFromPhoto.lat,
-          photoLng: gpsFromPhoto.lng,
-          taskLat: task.lat,
-          taskLng: task.lng,
-          radiusMeters: task.radiusMeters,
-        },
+    let gpsMismatch = false;
+    if (bodyLat != null && bodyLng != null && gpsFromPhoto) {
+      gpsMismatch = !isWithinZone(
+        gpsFromPhoto.lat,
+        gpsFromPhoto.lng,
+        preflight.task.lat,
+        preflight.task.lng,
+        preflight.task.radiusMeters / 1000,
       );
     }
-  }
 
-  // Persist effective coordinates (body GPS takes precedence for storage when
-  // there is no mismatch; photo GPS fills in when body is absent).
-  const effectiveLat = bodyLat ?? gpsFromPhoto?.lat ?? null;
-  const effectiveLng = bodyLng ?? gpsFromPhoto?.lng ?? null;
+    const effectiveLat = bodyLat ?? gpsFromPhoto?.lat;
+    const effectiveLng = bodyLng ?? gpsFromPhoto?.lng;
+    const commitResult = await prisma.$transaction(async (tx) => {
+      const eligibility = await checkSubmissionEligibility(tx, taskId, userId);
+      if (eligibility.status !== 200) return eligibility;
 
-  const proofUpdateData: { lat?: number; lng?: number; notes?: string } = {};
-  if (effectiveLat !== null && effectiveLng !== null) {
-    proofUpdateData.lat = effectiveLat;
-    proofUpdateData.lng = effectiveLng;
-  }
-  if (gpsMismatch) {
-    proofUpdateData.notes = 'gps_photo_mismatch';
-  }
-  if (Object.keys(proofUpdateData).length > 0) {
-    await prisma.proof.update({
-      where: { id: proof.id },
-      data: proofUpdateData,
+      const proof = await tx.proof.create({
+        data: {
+          userId,
+          taskId,
+          claimId: eligibility.claimId,
+          status: 'PENDING',
+          notes: gpsMismatch ? 'gps_photo_mismatch' : notes,
+          ...(effectiveLat != null && effectiveLng != null
+            ? { lat: effectiveLat, lng: effectiveLng }
+            : {}),
+          photos: {
+            create: preparedPhotos.map(
+              ({ gpsLat: _gpsLat, gpsLng: _gpsLng, ...photo }) => photo,
+            ),
+          },
+        },
+        include: { photos: true, verifications: true },
+      });
+      return { status: 201 as const, proof };
     });
+
+    if (commitResult.status !== 201) {
+      return respond(commitResult.status, { error: commitResult.error });
+    }
+
+    if (gpsMismatch) {
+      logger.warn('Photo EXIF GPS is outside the task radius', {
+        proofId: commitResult.proof.id,
+        bodyLat,
+        bodyLng,
+        photoLat: gpsFromPhoto?.lat,
+        photoLng: gpsFromPhoto?.lng,
+        taskLat: preflight.task.lat,
+        taskLng: preflight.task.lng,
+        radiusMeters: preflight.task.radiusMeters,
+      });
+    } else {
+      try {
+        await enqueueVerification(commitResult.proof.id, req.requestId);
+      } catch (err) {
+        try {
+          await prisma.$transaction(async (tx) => {
+            await tx.proofPhoto.deleteMany({
+              where: { proofId: commitResult.proof.id },
+            });
+            await tx.proof.delete({ where: { id: commitResult.proof.id } });
+          });
+        } catch (cleanupErr) {
+          logger.error('Failed to roll back proof after verification enqueue error', {
+            cleanupErr,
+            proofId: commitResult.proof.id,
+            requestId: req.requestId,
+          });
+        }
+        throw err;
+      }
+    }
+
+    return respond(201, commitResult.proof);
+  } catch (err) {
+    await cleanupFiles();
+    return next(err);
+  } finally {
+    await cleanupFiles();
   }
-
-  // Only enqueue auto-verification when GPS is consistent.  A mismatch leaves
-  // the proof in PENDING status for manual validator review.
-  if (!gpsMismatch) {
-    await enqueueVerification(proof.id, req.requestId);
-  }
-
-  const createdProof = await prisma.proof.findUnique({
-    where: { id: proof.id },
-    include: { photos: true, verifications: true },
-  });
-
-  return res.status(201).json(createdProof);
 }
 
 export async function getProof(req: Request, res: Response) {
