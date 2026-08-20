@@ -1,6 +1,10 @@
 import prisma from '../utils/prisma';
 import { isWithinRadius } from './geoService';
-import { hasMinimumResolution, isRecentlyCaptured, hasFutureCaptureSkew } from './photoService';
+import {
+  hasMinimumResolution,
+  isRecentlyCaptured,
+  hasFutureCaptureSkew,
+} from './photoService';
 
 interface VerificationResult {
   verdict: 'approved' | 'rejected' | 'inconclusive';
@@ -90,7 +94,15 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
 
   const score = checks.reduce((sum, c) => sum + (c.pass ? c.weight : 0), 0);
 
-  if (score >= 0.7) return { verdict: 'approved', confidence: score };
+  // Photographic evidence is the core promise of a proof submission: no
+  // combination of GPS/duplicate/expiry checks may auto-approve a proof that
+  // has no photos attached, no matter how high the rest of the score is.
+  // A photo-less proof can still land as inconclusive (routed to community
+  // validators) if the remaining signals are otherwise plausible, but never
+  // as an automatic approval.
+  const hasPhotos = proof.photos.length > 0;
+
+  if (score >= 0.7 && hasPhotos) return { verdict: 'approved', confidence: score };
   if (score >= 0.4) return { verdict: 'inconclusive', confidence: score };
   return {
     verdict: 'rejected',
