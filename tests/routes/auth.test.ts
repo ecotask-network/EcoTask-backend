@@ -20,7 +20,24 @@ jest.mock('../../src/services/rateLimitService', () => ({
   },
 }));
 
+jest.mock('../../src/utils/prisma', () => ({
+  __esModule: true,
+  default: { user: { findUnique: jest.fn() } },
+}));
+
+import prisma from '../../src/utils/prisma';
+
 const MOCK_WALLET = 'GBMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCK00';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  // authMiddleware now resolves the caller's current user record from the DB.
+  (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+    id: '1',
+    wallet: MOCK_WALLET,
+    role: 'user',
+  });
+});
 
 describe('Auth Routes', () => {
   it('GET /auth/challenge returns a challenge string for valid wallet', async () => {

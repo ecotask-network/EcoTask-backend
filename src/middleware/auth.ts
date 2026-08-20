@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import config from '../config/default.js';
 import { rateLimiter } from '../services/rateLimitService.js';
+import prisma from '../utils/prisma.js';
 import logger from '../utils/logger.js';
 
 const createAuthMiddleware =
@@ -39,7 +40,19 @@ const createAuthMiddleware =
       }
     }
 
-    req.user = payload;
+    // Resolve the user's current record so a token is rejected once the user is
+    // deleted or demoted, rather than continuing to authorise stale credentials.
+    // The fresh role is attached so role gates (admin/validator) can read from a
+    // single source of truth instead of re-fetching the user themselves.
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { id: true, wallet: true, role: true },
+    });
+    if (!user) {
+      return res.status(401).json({ error: 'user no longer exists' });
+    }
+
+    req.user = { userId: user.id, wallet: user.wallet, role: user.role };
     next();
   };
 
