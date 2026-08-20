@@ -17,6 +17,7 @@ import { enqueueRewardPayout } from '../workers/rewardWorker.js';
 import { claimCompletionSlot } from '../models/task.js';
 import logger from '../utils/logger.js';
 import { cleanupUploadedFiles } from '../middleware/upload.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 type SubmissionEligibility =
   | { status: 404 | 400 | 403 | 409; error: string }
@@ -67,177 +68,179 @@ async function checkSubmissionEligibility(
   return { status: 200, task, claimId: claim.id };
 }
 
-export async function submitProof(req: Request, res: Response, next: NextFunction) {
-  const files = req.files as Express.Multer.File[] | undefined;
-  let filesCleaned = false;
-  const cleanupFiles = async () => {
-    if (filesCleaned) return;
-    filesCleaned = true;
-    await cleanupUploadedFiles(files);
-  };
-  const respond = async (status: number, body: unknown) => {
-    await cleanupFiles();
-    return res.status(status).json(body);
-  };
+export const submitProof = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const files = req.files as Express.Multer.File[] | undefined;
+    let filesCleaned = false;
+    const cleanupFiles = async () => {
+      if (filesCleaned) return;
+      filesCleaned = true;
+      await cleanupUploadedFiles(files);
+    };
+    const respond = async (status: number, body: unknown) => {
+      await cleanupFiles();
+      return res.status(status).json(body);
+    };
 
-  try {
-    const parsed = submitProofSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return respond(400, {
-        error: 'invalid request body',
-        details: parsed.error.flatten(),
-      });
-    }
-
-    const { taskId, lat: bodyLat, lng: bodyLng, notes } = parsed.data;
-    const userId = req.user!.userId;
-    const preflight = await prisma.$transaction((tx) =>
-      checkSubmissionEligibility(tx, taskId, userId),
-    );
-    if (preflight.status !== 200) {
-      return respond(preflight.status, { error: preflight.error });
-    }
-
-    const preparedPhotos: Array<{
-      cid: string;
-      filename: string;
-      sha256: string;
-      width: number | null;
-      height: number | null;
-      capturedAt: Date | null;
-      gpsLat: number | null;
-      gpsLng: number | null;
-    }> = [];
     try {
-      // IPFS is external to the database transaction. Prepare every CID first;
-      // if any preparation fails, no proof or photo row becomes visible.
-      const photoResults = await Promise.allSettled(
-        (files ?? []).map(async (file) => {
-          const [sha256, metadata] = await Promise.all([
-            hashFile(file.path),
-            extractPhotoMetadata(file.path),
-          ]);
-          const cid = await uploadToIPFS(file.path, file.filename);
-          return {
-            cid,
-            filename: file.originalname,
-            sha256,
-            width: metadata.width,
-            height: metadata.height,
-            capturedAt: metadata.capturedAt,
-            gpsLat: metadata.gpsLat,
-            gpsLng: metadata.gpsLng,
-          };
-        }),
-      );
-
-      for (const result of photoResults) {
-        if (result.status === 'rejected') throw result.reason;
-        preparedPhotos.push(result.value);
+      const parsed = submitProofSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return respond(400, {
+          error: 'invalid request body',
+          details: parsed.error.flatten(),
+        });
       }
-    } catch (err) {
-      logger.error('Proof photo processing failed', {
-        err,
-        taskId,
-        userId,
-        requestId: req.requestId,
-      });
-      return respond(500, { error: 'failed to process proof photos' });
-    }
 
-    let gpsFromPhoto: { lat: number; lng: number } | null = null;
-    for (const photo of preparedPhotos) {
-      if (photo.gpsLat != null && photo.gpsLng != null) {
-        gpsFromPhoto = { lat: photo.gpsLat, lng: photo.gpsLng };
-        break;
-      }
-    }
-
-    let gpsMismatch = false;
-    if (bodyLat != null && bodyLng != null && gpsFromPhoto) {
-      gpsMismatch = !isWithinZone(
-        gpsFromPhoto.lat,
-        gpsFromPhoto.lng,
-        preflight.task.lat,
-        preflight.task.lng,
-        preflight.task.radiusMeters / 1000,
+      const { taskId, lat: bodyLat, lng: bodyLng, notes } = parsed.data;
+      const userId = req.user!.userId;
+      const preflight = await prisma.$transaction((tx) =>
+        checkSubmissionEligibility(tx, taskId, userId),
       );
-    }
+      if (preflight.status !== 200) {
+        return respond(preflight.status, { error: preflight.error });
+      }
 
-    const effectiveLat = bodyLat ?? gpsFromPhoto?.lat;
-    const effectiveLng = bodyLng ?? gpsFromPhoto?.lng;
-    const commitResult = await prisma.$transaction(async (tx) => {
-      const eligibility = await checkSubmissionEligibility(tx, taskId, userId);
-      if (eligibility.status !== 200) return eligibility;
-
-      const proof = await tx.proof.create({
-        data: {
-          userId,
-          taskId,
-          claimId: eligibility.claimId,
-          status: 'PENDING',
-          notes: gpsMismatch ? 'gps_photo_mismatch' : notes,
-          ...(effectiveLat != null && effectiveLng != null
-            ? { lat: effectiveLat, lng: effectiveLng }
-            : {}),
-          photos: {
-            create: preparedPhotos.map(
-              ({ gpsLat: _gpsLat, gpsLng: _gpsLng, ...photo }) => photo,
-            ),
-          },
-        },
-        include: { photos: true, verifications: true },
-      });
-      return { status: 201 as const, proof };
-    });
-
-    if (commitResult.status !== 201) {
-      return respond(commitResult.status, { error: commitResult.error });
-    }
-
-    if (gpsMismatch) {
-      logger.warn('Photo EXIF GPS is outside the task radius', {
-        proofId: commitResult.proof.id,
-        bodyLat,
-        bodyLng,
-        photoLat: gpsFromPhoto?.lat,
-        photoLng: gpsFromPhoto?.lng,
-        taskLat: preflight.task.lat,
-        taskLng: preflight.task.lng,
-        radiusMeters: preflight.task.radiusMeters,
-      });
-    } else {
+      const preparedPhotos: Array<{
+        cid: string;
+        filename: string;
+        sha256: string;
+        width: number | null;
+        height: number | null;
+        capturedAt: Date | null;
+        gpsLat: number | null;
+        gpsLng: number | null;
+      }> = [];
       try {
-        await enqueueVerification(commitResult.proof.id, req.requestId);
-      } catch (err) {
-        try {
-          await prisma.$transaction(async (tx) => {
-            await tx.proofPhoto.deleteMany({
-              where: { proofId: commitResult.proof.id },
-            });
-            await tx.proof.delete({ where: { id: commitResult.proof.id } });
-          });
-        } catch (cleanupErr) {
-          logger.error('Failed to roll back proof after verification enqueue error', {
-            cleanupErr,
-            proofId: commitResult.proof.id,
-            requestId: req.requestId,
-          });
+        // IPFS is external to the database transaction. Prepare every CID first;
+        // if any preparation fails, no proof or photo row becomes visible.
+        const photoResults = await Promise.allSettled(
+          (files ?? []).map(async (file) => {
+            const [sha256, metadata] = await Promise.all([
+              hashFile(file.path),
+              extractPhotoMetadata(file.path),
+            ]);
+            const cid = await uploadToIPFS(file.path, file.filename);
+            return {
+              cid,
+              filename: file.originalname,
+              sha256,
+              width: metadata.width,
+              height: metadata.height,
+              capturedAt: metadata.capturedAt,
+              gpsLat: metadata.gpsLat,
+              gpsLng: metadata.gpsLng,
+            };
+          }),
+        );
+
+        for (const result of photoResults) {
+          if (result.status === 'rejected') throw result.reason;
+          preparedPhotos.push(result.value);
         }
-        throw err;
+      } catch (err) {
+        logger.error('Proof photo processing failed', {
+          err,
+          taskId,
+          userId,
+          requestId: req.requestId,
+        });
+        return respond(500, { error: 'failed to process proof photos' });
       }
+
+      let gpsFromPhoto: { lat: number; lng: number } | null = null;
+      for (const photo of preparedPhotos) {
+        if (photo.gpsLat != null && photo.gpsLng != null) {
+          gpsFromPhoto = { lat: photo.gpsLat, lng: photo.gpsLng };
+          break;
+        }
+      }
+
+      let gpsMismatch = false;
+      if (bodyLat != null && bodyLng != null && gpsFromPhoto) {
+        gpsMismatch = !isWithinZone(
+          gpsFromPhoto.lat,
+          gpsFromPhoto.lng,
+          preflight.task.lat,
+          preflight.task.lng,
+          preflight.task.radiusMeters / 1000,
+        );
+      }
+
+      const effectiveLat = bodyLat ?? gpsFromPhoto?.lat;
+      const effectiveLng = bodyLng ?? gpsFromPhoto?.lng;
+      const commitResult = await prisma.$transaction(async (tx) => {
+        const eligibility = await checkSubmissionEligibility(tx, taskId, userId);
+        if (eligibility.status !== 200) return eligibility;
+
+        const proof = await tx.proof.create({
+          data: {
+            userId,
+            taskId,
+            claimId: eligibility.claimId,
+            status: 'PENDING',
+            notes: gpsMismatch ? 'gps_photo_mismatch' : notes,
+            ...(effectiveLat != null && effectiveLng != null
+              ? { lat: effectiveLat, lng: effectiveLng }
+              : {}),
+            photos: {
+              create: preparedPhotos.map(
+                ({ gpsLat: _gpsLat, gpsLng: _gpsLng, ...photo }) => photo,
+              ),
+            },
+          },
+          include: { photos: true, verifications: true },
+        });
+        return { status: 201 as const, proof };
+      });
+
+      if (commitResult.status !== 201) {
+        return respond(commitResult.status, { error: commitResult.error });
+      }
+
+      if (gpsMismatch) {
+        logger.warn('Photo EXIF GPS is outside the task radius', {
+          proofId: commitResult.proof.id,
+          bodyLat,
+          bodyLng,
+          photoLat: gpsFromPhoto?.lat,
+          photoLng: gpsFromPhoto?.lng,
+          taskLat: preflight.task.lat,
+          taskLng: preflight.task.lng,
+          radiusMeters: preflight.task.radiusMeters,
+        });
+      } else {
+        try {
+          await enqueueVerification(commitResult.proof.id, req.requestId);
+        } catch (err) {
+          try {
+            await prisma.$transaction(async (tx) => {
+              await tx.proofPhoto.deleteMany({
+                where: { proofId: commitResult.proof.id },
+              });
+              await tx.proof.delete({ where: { id: commitResult.proof.id } });
+            });
+          } catch (cleanupErr) {
+            logger.error('Failed to roll back proof after verification enqueue error', {
+              cleanupErr,
+              proofId: commitResult.proof.id,
+              requestId: req.requestId,
+            });
+          }
+          throw err;
+        }
+      }
+
+      return respond(201, commitResult.proof);
+    } catch (err) {
+      await cleanupFiles();
+      return next(err);
+    } finally {
+      await cleanupFiles();
     }
+  },
+);
 
-    return respond(201, commitResult.proof);
-  } catch (err) {
-    await cleanupFiles();
-    return next(err);
-  } finally {
-    await cleanupFiles();
-  }
-}
-
-export async function getProof(req: Request, res: Response) {
+export const getProof = asyncHandler(async (req: Request, res: Response) => {
   const proof = await prisma.proof.findUnique({
     where: { id: req.params.id },
     include: { photos: true, verifications: true },
@@ -252,7 +255,7 @@ export async function getProof(req: Request, res: Response) {
   }
 
   return res.json(proof);
-}
+});
 
 async function isAdmin(userId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
@@ -262,7 +265,7 @@ async function isAdmin(userId: string): Promise<boolean> {
   return user?.role === 'admin';
 }
 
-export async function listPendingProofs(req: Request, res: Response) {
+export const listPendingProofs = asyncHandler(async (req: Request, res: Response) => {
   const parsed = listPendingProofsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res
@@ -297,9 +300,9 @@ export async function listPendingProofs(req: Request, res: Response) {
     data: proofs,
     meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
   });
-}
+});
 
-export async function reviewProof(req: Request, res: Response) {
+export const reviewProof = asyncHandler(async (req: Request, res: Response) => {
   const parsed = reviewProofSchema.safeParse(req.body);
   if (!parsed.success) {
     return res
@@ -362,9 +365,9 @@ export async function reviewProof(req: Request, res: Response) {
     include: { photos: true, verifications: true },
   });
   return res.json(updated);
-}
+});
 
-export async function getUserProofs(req: Request, res: Response) {
+export const getUserProofs = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.params.userId;
 
   if (userId !== req.user!.userId && !(await isAdmin(req.user!.userId))) {
@@ -397,4 +400,4 @@ export async function getUserProofs(req: Request, res: Response) {
     data: proofs,
     meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
   });
-}
+});
