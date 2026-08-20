@@ -32,6 +32,8 @@ jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
     proof: { findUnique: jest.fn(), update: jest.fn() },
+    rewardPayout: { updateMany: jest.fn(), update: jest.fn() },
+    $transaction: jest.fn(),
   },
 }));
 
@@ -46,12 +48,14 @@ import { submitReward } from '../../src/services/stellarService';
 
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock; update: jest.Mock };
+  rewardPayout: { updateMany: jest.Mock; update: jest.Mock };
+  $transaction: jest.Mock;
 };
 const mockSubmitReward = submitReward as jest.Mock;
 
 let processor: (job: {
   id: string;
-  data: { proofId: string; requestId?: string };
+  data: { payoutId: string; proofId: string; requestId?: string };
 }) => Promise<void>;
 
 beforeAll(() => {
@@ -74,10 +78,13 @@ function approvedProof(overrides: Record<string, unknown> = {}) {
 describe('Reward Worker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+    );
   });
 
-  it('retains completed and failed payout jobs', async () => {
-    await enqueueRewardPayout('proof-1', 'request-1');
+  it('enqueues payout job with payoutId as jobId for dedup', async () => {
+    await enqueueRewardPayout('payout-1', 'proof-1', 'request-1');
 
     const queue = (Queue as unknown as jest.Mock).mock.results[0].value as {
       add: jest.Mock;
@@ -85,43 +92,50 @@ describe('Reward Worker', () => {
 
     expect(queue.add).toHaveBeenCalledWith(
       'payout',
-      { proofId: 'proof-1', requestId: 'request-1' },
+      { payoutId: 'payout-1', proofId: 'proof-1', requestId: 'request-1' },
       {
+        jobId: 'payout-1',
         removeOnComplete: { count: 1000 },
         removeOnFail: { age: 604800 },
       },
     );
   });
 
-  it('skips payout for an already rewarded proof', async () => {
-    mockPrisma.proof.findUnique.mockResolvedValue(
-      approvedProof({ rewardedAt: new Date('2026-08-01') }),
-    );
-
-    await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
-
-    expect(mockSubmitReward).not.toHaveBeenCalled();
-    expect(mockPrisma.proof.update).not.toHaveBeenCalled();
-  });
-
-  it('refuses to pay out for a proof that is not approved', async () => {
-    mockPrisma.proof.findUnique.mockResolvedValue(approvedProof({ status: 'PENDING' }));
-
-    await expect(
-      processor({ id: 'job-1', data: { proofId: 'proof-1' } }),
-    ).rejects.toThrow(/not approved|state 'PENDING'/);
-
-    expect(mockSubmitReward).not.toHaveBeenCalled();
-  });
-
-  it('pays out once and records the reward timestamp', async () => {
-    mockPrisma.proof.findUnique.mockResolvedValue(approvedProof());
-    mockSubmitReward.mockResolvedValue('tx-hash-1');
-    mockPrisma.proof.update.mockResolvedValue({});
+  it('skips payout when another worker already claimed it', async () => {
+    mockPrisma.rewardPayout.updateMany.mockResolvedValue({ count: 0 });
 
     await processor({
       id: 'job-1',
-      data: { proofId: 'proof-1', requestId: 'request-1' },
+      data: { payoutId: 'payout-1', proofId: 'proof-1' },
+    });
+
+    expect(mockSubmitReward).not.toHaveBeenCalled();
+    expect(mockPrisma.proof.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('refuses to pay out for a proof that is not approved', async () => {
+    mockPrisma.rewardPayout.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.proof.findUnique.mockResolvedValue(approvedProof({ status: 'PENDING' }));
+
+    await expect(
+      processor({ id: 'job-1', data: { payoutId: 'payout-1', proofId: 'proof-1' } }),
+    ).rejects.toThrow(/not approved|state 'PENDING'/);
+
+    expect(mockSubmitReward).not.toHaveBeenCalled();
+    expect(mockPrisma.rewardPayout.update).toHaveBeenCalledWith({
+      where: { id: 'payout-1' },
+      data: { status: 'FAILED', lastError: expect.any(String) },
+    });
+  });
+
+  it('pays out once and marks payout PAID with txHash', async () => {
+    mockPrisma.rewardPayout.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.proof.findUnique.mockResolvedValue(approvedProof());
+    mockSubmitReward.mockResolvedValue('tx-hash-1');
+
+    await processor({
+      id: 'job-1',
+      data: { payoutId: 'payout-1', proofId: 'proof-1', requestId: 'request-1' },
     });
 
     expect(mockSubmitReward).toHaveBeenCalledWith({
@@ -130,15 +144,59 @@ describe('Reward Worker', () => {
       amount: '500000000',
       assetCode: 'ECO',
     });
-    expect(mockPrisma.proof.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { rewardedAt: expect.any(Date) } }),
-    );
-    const mockedLogger = jest.requireMock('../../src/utils/logger').default as {
-      info: jest.Mock;
-    };
-    expect(mockedLogger.info).toHaveBeenCalledWith('Processing reward payout', {
-      proofId: 'proof-1',
-      requestId: 'request-1',
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.rewardPayout.update).toHaveBeenCalledWith({
+      where: { id: 'payout-1' },
+      data: { status: 'PAID', txHash: 'tx-hash-1' },
     });
+    expect(mockPrisma.proof.update).toHaveBeenCalledWith({
+      where: { id: 'proof-1' },
+      data: { rewardedAt: expect.any(Date) },
+    });
+  });
+
+  it('marks payout FAILED on Stellar submission error', async () => {
+    mockPrisma.rewardPayout.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.proof.findUnique.mockResolvedValue(approvedProof());
+    mockSubmitReward.mockRejectedValue(new Error('Stellar error'));
+
+    await expect(
+      processor({
+        id: 'job-1',
+        data: { payoutId: 'payout-1', proofId: 'proof-1' },
+      }),
+    ).rejects.toThrow('Stellar error');
+
+    expect(mockPrisma.rewardPayout.update).toHaveBeenCalledWith({
+      where: { id: 'payout-1' },
+      data: {
+        status: 'FAILED',
+        lastError: 'Stellar error',
+        attempts: { increment: 1 },
+      },
+    });
+  });
+
+  it('concurrent jobs for the same payoutId result in exactly one payment', async () => {
+    let claimCount = 0;
+    mockPrisma.rewardPayout.updateMany.mockImplementation(async () => {
+      claimCount++;
+      return { count: claimCount === 1 ? 1 : 0 };
+    });
+    mockPrisma.proof.findUnique.mockResolvedValue(approvedProof());
+    mockSubmitReward.mockResolvedValue('tx-hash-1');
+
+    const job1 = processor({
+      id: 'job-1',
+      data: { payoutId: 'payout-1', proofId: 'proof-1' },
+    });
+    const job2 = processor({
+      id: 'job-2',
+      data: { payoutId: 'payout-1', proofId: 'proof-1' },
+    });
+
+    await Promise.all([job1, job2]);
+
+    expect(mockSubmitReward).toHaveBeenCalledTimes(1);
   });
 });

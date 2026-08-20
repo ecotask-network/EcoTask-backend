@@ -38,6 +38,9 @@ if (process.env.NODE_ENV !== 'test') {
   import('./workers/notificationOutboxSweeper.js').then(({ startOutboxSweeper }) => {
     startOutboxSweeper();
   });
+  import('./services/rewardPayoutSweeper.js').then(({ startRewardPayoutSweeper }) => {
+    startRewardPayoutSweeper();
+  });
 }
 
 const app = express();
@@ -111,6 +114,11 @@ if (process.env.NODE_ENV !== 'test') {
         await import('./workers/notificationOutboxSweeper.js');
       stopOutboxSweeper();
       logger.info('Notification outbox sweeper stopped');
+
+      const { stopRewardPayoutSweeper } =
+        await import('./services/rewardPayoutSweeper.js');
+      stopRewardPayoutSweeper();
+      logger.info('Reward payout sweeper stopped');
 
       await prisma.$disconnect();
       logger.info('Prisma client disconnected');

@@ -39,18 +39,17 @@ jest.mock('../../src/services/validatorService', () => ({
 jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
-    proof: { findUnique: jest.fn(), update: jest.fn() },
+    proof: { findUnique: jest.fn(), updateMany: jest.fn(), update: jest.fn() },
     verification: { create: jest.fn() },
+    rewardPayout: { create: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
 
 jest.mock('../../src/models/task', () => ({
-  claimCompletionSlot: jest.fn().mockResolvedValue({ claimed: true, taskCompleted: false }),
-}));
-
-jest.mock('../../src/workers/rewardWorker', () => ({
-  enqueueRewardPayout: jest.fn().mockResolvedValue(undefined),
+  claimCompletionSlot: jest
+    .fn()
+    .mockResolvedValue({ claimed: true, taskCompleted: false }),
 }));
 
 jest.mock('../../src/utils/logger', () => ({
@@ -66,8 +65,9 @@ import prisma from '../../src/utils/prisma';
 import { notifyProofStatus } from '../../src/services/notificationService';
 
 const mockPrisma = prisma as unknown as {
-  proof: { findUnique: jest.Mock; update: jest.Mock };
+  proof: { findUnique: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
   verification: { create: jest.Mock };
+  rewardPayout: { create: jest.Mock };
   $transaction: jest.Mock;
 };
 
@@ -114,8 +114,8 @@ describe('Verification Worker', () => {
   });
 
   it('skips proofs that have already reached a final state', async () => {
+    mockPrisma.proof.updateMany.mockResolvedValue({ count: 0 });
     mockPrisma.proof.findUnique.mockResolvedValue({
-      userId: 'user-1',
       status: 'APPROVED',
     });
 
@@ -127,9 +127,11 @@ describe('Verification Worker', () => {
     expect(mockPrisma.proof.update).not.toHaveBeenCalled();
   });
 
-  it('processes pending proofs', async () => {
+  it('claims pending proof via atomic updateMany', async () => {
+    mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.proof.findUnique.mockResolvedValue({
       userId: 'user-1',
+      taskId: 'task-1',
       status: 'PENDING',
     });
     mockPrisma.proof.update.mockResolvedValue({});
@@ -140,13 +142,14 @@ describe('Verification Worker', () => {
 
     await processor({ id: 'job-1', data: { proofId: 'proof-1' } });
 
-    expect(mockPrisma.proof.update).toHaveBeenCalledWith({
-      where: { id: 'proof-1' },
+    expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+      where: { id: 'proof-1', status: 'PENDING' },
       data: { status: 'VERIFYING' },
     });
   });
 
-  it('approves valid proofs, checks capacity and enqueues payout', async () => {
+  it('approves valid proofs, checks capacity and creates payout outbox row', async () => {
+    mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.proof.findUnique.mockResolvedValue({
       userId: 'user-1',
       taskId: 'task-1',
@@ -162,11 +165,6 @@ describe('Verification Worker', () => {
       claimCompletionSlot: jest.Mock;
     };
     claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: true });
-    const { enqueueRewardPayout } = jest.requireMock(
-      '../../src/workers/rewardWorker',
-    ) as {
-      enqueueRewardPayout: jest.Mock;
-    };
     const { notifyProofStatus } = jest.requireMock(
       '../../src/services/notificationService',
     ) as {
@@ -187,9 +185,6 @@ describe('Verification Worker', () => {
     });
     expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
 
-    // The proof status update, the Verification record and the notification
-    // are all committed inside the same interactive transaction so a crash
-    // between "approved" and "notified" cannot happen.
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(notifyProofStatus).toHaveBeenCalledWith(
       'user-1',
@@ -198,7 +193,9 @@ describe('Verification Worker', () => {
       mockPrisma,
       'request-1',
     );
-    expect(enqueueRewardPayout).toHaveBeenCalledWith('proof-1', 'request-1');
+    expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
+      data: { proofId: 'proof-1', requestId: 'request-1' },
+    });
     expect(mockedLogger.info).toHaveBeenCalledWith('Processing proof verification', {
       proofId: 'proof-1',
       requestId: 'request-1',
@@ -206,6 +203,7 @@ describe('Verification Worker', () => {
   });
 
   it('rejects invalid proofs inside the same transaction as the notification', async () => {
+    mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.proof.findUnique.mockResolvedValue({
       userId: 'user-1',
       taskId: 'task-1',
@@ -230,9 +228,11 @@ describe('Verification Worker', () => {
       'REJECTED',
       mockPrisma,
     );
+    expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
   });
 
   it('assigns inconclusive proofs to community validators', async () => {
+    mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.proof.findUnique.mockResolvedValue({
       userId: 'user-1',
       taskId: 'task-1',
@@ -257,5 +257,42 @@ describe('Verification Worker', () => {
       where: { id: 'proof-1' },
       data: { status: 'APPROVED' },
     });
+    expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
+  });
+
+  it('concurrent verification jobs for the same proof are idempotent', async () => {
+    let claimCount = 0;
+    mockPrisma.proof.updateMany.mockImplementation(async () => {
+      claimCount++;
+      return { count: claimCount === 1 ? 1 : 0 };
+    });
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      taskId: 'task-1',
+      status: 'PENDING',
+    });
+    mockPrisma.proof.update.mockResolvedValue({});
+    const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      autoVerify: jest.Mock;
+    };
+    autoVerify.mockResolvedValue({ verdict: 'approved', confidence: 0.9, notes: 'ok' });
+    const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+      claimCompletionSlot: jest.Mock;
+    };
+    claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: false });
+
+    const job1 = processor({
+      id: 'job-1',
+      data: { proofId: 'proof-1' },
+    });
+    const job2 = processor({
+      id: 'job-2',
+      data: { proofId: 'proof-1' },
+    });
+
+    await Promise.all([job1, job2]);
+
+    expect(autoVerify).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.rewardPayout.create).toHaveBeenCalledTimes(1);
   });
 });

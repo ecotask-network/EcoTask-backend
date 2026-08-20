@@ -3,7 +3,6 @@ import config from '../config/default.js';
 import logger from '../utils/logger.js';
 import { notifyProofStatus } from './notificationService.js';
 import { claimCompletionSlot } from '../models/task.js';
-import { enqueueRewardPayout } from '../workers/rewardWorker.js';
 
 const AUTO_VERIFIER_ID = 'quorum';
 
@@ -172,9 +171,12 @@ async function finalizeProof(
   const result = await prisma.$transaction(async (tx) => {
     const proofRow = await tx.proof.findUnique({
       where: { id: proofId },
-      select: { taskId: true },
+      select: { taskId: true, status: true },
     });
     if (!proofRow) return null;
+    if (proofRow.status === 'APPROVED' || proofRow.status === 'REJECTED') {
+      return null;
+    }
 
     let finalStatus: 'APPROVED' | 'REJECTED' = requestedStatus;
     let taskCompleted = false;
@@ -190,7 +192,12 @@ async function finalizeProof(
       }
     }
 
-    await tx.proof.update({ where: { id: proofId }, data: { status: finalStatus } });
+    const { count } = await tx.proof.updateMany({
+      where: { id: proofId, status: { in: ['PENDING', 'VERIFYING'] } },
+      data: { status: finalStatus },
+    });
+    if (count === 0) return null;
+
     await tx.verification.create({
       data: {
         proofId,
@@ -224,6 +231,16 @@ async function finalizeProof(
         await notifyProofStatus(proofRecord.userId, proofId, finalStatus, tx);
       }
     }
+
+    if (finalStatus === 'APPROVED') {
+      await tx.rewardPayout.create({
+        data: {
+          proofId,
+          ...(requestId ? { requestId } : {}),
+        },
+      });
+    }
+
     return { proofRecord, finalStatus, taskCompleted };
   });
 
@@ -233,7 +250,6 @@ async function finalizeProof(
         taskId: result.proofRecord.taskId,
       });
     }
-    await enqueueRewardPayout(proofId, requestId);
   }
 
   logger.info('Quorum reached, proof finalized', {
