@@ -3,7 +3,6 @@ import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
 import { assignValidators } from '../services/validatorService';
 import { claimCompletionSlot } from '../models/task';
-import { enqueueRewardPayout } from './rewardWorker';
 import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
@@ -49,25 +48,28 @@ const worker = new Worker<VerificationJobData>(
     return runWithRequestContext(requestId, async () => {
       logger.info('Processing proof verification', { proofId, ...requestMeta });
 
-      const proof = await prisma.proof.findUnique({
-        where: { id: proofId },
-        select: { userId: true, taskId: true, status: true },
+      const { count: claimed } = await prisma.proof.updateMany({
+        where: { id: proofId, status: 'PENDING' },
+        data: { status: 'VERIFYING' },
       });
-      if (!proof) throw new Error('Proof not found');
-
-      if (proof.status !== 'PENDING') {
+      if (claimed === 0) {
+        const existing = await prisma.proof.findUnique({
+          where: { id: proofId },
+          select: { status: true },
+        });
         logger.info('Skipping proof already processed', {
           proofId,
-          status: proof.status,
+          status: existing?.status ?? 'UNKNOWN',
           ...requestMeta,
         });
         return;
       }
 
-      await prisma.proof.update({
+      const proof = await prisma.proof.findUnique({
         where: { id: proofId },
-        data: { status: 'VERIFYING' },
+        select: { userId: true, taskId: true },
       });
+      if (!proof) throw new Error('Proof not found');
 
       const result = await autoVerify(proofId);
 
@@ -103,6 +105,15 @@ const worker = new Worker<VerificationJobData>(
             await notifyProofStatus(proof.userId, proofId, finalStatus, tx);
           }
 
+          if (finalStatus === 'APPROVED') {
+            await tx.rewardPayout.create({
+              data: {
+                proofId,
+                ...(requestId ? { requestId } : {}),
+              },
+            });
+          }
+
           return { finalStatus, taskCompleted };
         });
 
@@ -113,7 +124,6 @@ const worker = new Worker<VerificationJobData>(
               ...requestMeta,
             });
           }
-          await enqueueRewardPayout(proofId, requestId);
         } else {
           logger.info('Auto-approved proof rejected: task at capacity', {
             proofId,
