@@ -33,7 +33,7 @@ export async function getChallenge(req: Request, res: Response) {
   return res.json({ challenge });
 }
 
-export async function login(req: Request, res: Response) {
+export const login = asyncHandler(async (req: Request, res: Response) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res
@@ -77,13 +77,13 @@ export async function login(req: Request, res: Response) {
   } as SignOptions);
 
   return res.json({ token, user });
-}
+});
 
 export function verify(req: Request, res: Response) {
   return res.json({ user: req.user });
 }
 
-export async function logout(req: Request, res: Response) {
+export const logout = asyncHandler(async (req: Request, res: Response) => {
   try {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) {
@@ -106,4 +106,4 @@ export async function logout(req: Request, res: Response) {
   } catch {
     return res.status(500).json({ error: 'logout failed' });
   }
-}
+});

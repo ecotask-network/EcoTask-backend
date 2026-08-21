@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import { rateLimiter } from '../services/rateLimitService.js';
 import config from '../config/default.js';
 import logger from '../utils/logger.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -61,7 +62,7 @@ export function perUserLimiter(options: PerUserLimitOptions) {
       logger.warn('Per-user rate limiter unavailable, allowing request', { err });
       next();
     }
-  };
+  });
 }
 
 export const proofSubmissionLimiter = perUserLimiter({
