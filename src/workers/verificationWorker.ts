@@ -2,8 +2,7 @@ import { Worker, Queue } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
 import { assignValidators } from '../services/validatorService';
-import { completeTaskIfFull } from '../models/task';
-import { enqueueRewardPayout } from './rewardWorker';
+import { claimCompletionSlot } from '../models/task';
 import config from '../config/default';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
@@ -49,58 +48,89 @@ const worker = new Worker<VerificationJobData>(
     return runWithRequestContext(requestId, async () => {
       logger.info('Processing proof verification', { proofId, ...requestMeta });
 
-      const proof = await prisma.proof.findUnique({
-        where: { id: proofId },
-        select: { userId: true, taskId: true, status: true },
+      const { count: claimed } = await prisma.proof.updateMany({
+        where: { id: proofId, status: 'PENDING' },
+        data: { status: 'VERIFYING' },
       });
-      if (!proof) throw new Error('Proof not found');
-
-      if (proof.status !== 'PENDING') {
+      if (claimed === 0) {
+        const existing = await prisma.proof.findUnique({
+          where: { id: proofId },
+          select: { status: true },
+        });
         logger.info('Skipping proof already processed', {
           proofId,
-          status: proof.status,
+          status: existing?.status ?? 'UNKNOWN',
           ...requestMeta,
         });
         return;
       }
 
-      await prisma.proof.update({
+      const proof = await prisma.proof.findUnique({
         where: { id: proofId },
-        data: { status: 'VERIFYING' },
+        select: { userId: true, taskId: true },
       });
+      if (!proof) throw new Error('Proof not found');
 
       const result = await autoVerify(proofId);
 
       if (result.verdict === 'approved') {
-        await prisma.$transaction(async (tx) => {
+        const { finalStatus, taskCompleted } = await prisma.$transaction(async (tx) => {
+          let finalStatus: 'APPROVED' | 'REJECTED' = 'APPROVED';
+          let taskCompleted = false;
+          let notes = result.notes || `confidence: ${result.confidence}`;
+
+          const slot = await claimCompletionSlot(tx, proof.taskId);
+          if (!slot.claimed) {
+            finalStatus = 'REJECTED';
+            notes += ' [auto-rejected: task reached max completions]';
+          } else {
+            taskCompleted = slot.taskCompleted;
+          }
+
           await tx.proof.update({
             where: { id: proofId },
-            data: { status: 'APPROVED' },
+            data: { status: finalStatus },
           });
           await tx.verification.create({
             data: {
               proofId,
               verifierId: 'auto-verifier',
               verdict: result.verdict,
-              notes: result.notes || `confidence: ${result.confidence}`,
+              notes,
             },
           });
           if (requestId) {
-            await notifyProofStatus(proof.userId, proofId, 'APPROVED', tx, requestId);
+            await notifyProofStatus(proof.userId, proofId, finalStatus, tx, requestId);
           } else {
-            await notifyProofStatus(proof.userId, proofId, 'APPROVED', tx);
+            await notifyProofStatus(proof.userId, proofId, finalStatus, tx);
           }
+
+          if (finalStatus === 'APPROVED') {
+            await tx.rewardPayout.create({
+              data: {
+                proofId,
+                ...(requestId ? { requestId } : {}),
+              },
+            });
+          }
+
+          return { finalStatus, taskCompleted };
         });
 
-        const completed = await completeTaskIfFull(proof.taskId);
-        if (completed) {
-          logger.info('Task reached capacity and was completed', {
+        if (finalStatus === 'APPROVED') {
+          if (taskCompleted) {
+            logger.info('Task reached capacity and was completed', {
+              taskId: proof.taskId,
+              ...requestMeta,
+            });
+          }
+        } else {
+          logger.info('Auto-approved proof rejected: task at capacity', {
+            proofId,
             taskId: proof.taskId,
             ...requestMeta,
           });
         }
-
-        await enqueueRewardPayout(proofId, requestId);
       } else if (result.verdict === 'rejected') {
         await prisma.$transaction(async (tx) => {
           await tx.proof.update({

@@ -14,6 +14,13 @@ enum ProofStatus {
   REJECTED
 }
 
+enum RewardPayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
 enum NotificationOutboxStatus {
   PENDING
   PROCESSING
@@ -46,12 +53,13 @@ model Task {
   title     String
   description String?
   type      String
-  rewardAmount Float  @map("reward_amount")
+  rewardAmountMicros BigInt  @map("reward_amount_micros")
   rewardToken String? @map("reward_token")
   lat       Float
   lng       Float
   radiusMeters Float  @default(100) @map("radius_meters")
   maxCompletions Int?   @map("max_completions")
+  completedCount Int    @default(0) @map("completed_count")
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
@@ -102,6 +110,7 @@ model Proof {
   photos     ProofPhoto[]
   verifications Verification[]
   validatorVotes ValidatorVote[]
+  rewardPayout RewardPayout?
 
   // Hot-path query shapes (see docs/index-verification.md):
   //  - (user_id, status): getUserImpact aggregation
@@ -131,7 +140,7 @@ model ProofPhoto {
   // was redundant and has been dropped (see migration ...0008).
   @@index([proofId])
   // Covering index for the duplicate-photo check
-  // (WHERE sha256 IN (...) AND proofId != ?) — enables an index-only scan.
+  // (WHERE sha256 IN (...) AND proofId != ?) â€” enables an index-only scan.
   @@index([sha256, proofId])
   @@map("proof_photos")
 }
@@ -167,6 +176,33 @@ model ValidatorVote {
   @@unique([proofId, validatorId])
   @@index([validatorId, decidedAt])
   @@map("validator_votes")
+}
+
+// Transactional outbox / idempotency ledger for reward payouts. A row is
+// created in the SAME database transaction as the proof approval, so a crash
+// between "proof approved" and "payout enqueued" still leaves a recoverable
+// PENDING row that the payout sweeper will pick up after restart.
+//
+// The UNIQUE constraint on proofId guarantees at-most-once payout per proof.
+// The worker atomically claims a row (PENDING → PROCESSING via updateMany
+// with a WHERE guard) before submitting the Stellar payment, so two
+// concurrent workers can never both pass the claim.
+model RewardPayout {
+  id             String             @id @default(uuid())
+  proofId        String             @unique @map("proof_id")
+  requestId      String?            @map("request_id")
+  status         RewardPayoutStatus @default(PENDING)
+  txHash         String?            @map("tx_hash")
+  attempts       Int                @default(0)
+  lastError      String?            @map("last_error")
+  nextAttemptAt  DateTime           @default(now()) @map("next_attempt_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  proof Proof @relation(fields: [proofId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@map("reward_payouts")
 }
 
 model AuditLog {

@@ -2,6 +2,7 @@ import request from 'supertest';
 import app from '../../src/app';
 import jwt from 'jsonwebtoken';
 import path from 'path';
+import fs from 'fs';
 
 jest.mock('../../src/services/auditService', () => ({
   logAudit: jest.fn(),
@@ -15,13 +16,16 @@ jest.mock('../../src/utils/prisma', () => ({
     taskClaim: { findFirst: jest.fn() },
     proof: {
       create: jest.fn(),
+      delete: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
-    proofPhoto: { create: jest.fn() },
+    proofPhoto: { create: jest.fn(), deleteMany: jest.fn() },
     verification: { create: jest.fn() },
+    rewardPayout: { create: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
@@ -35,7 +39,9 @@ jest.mock('../../src/workers/rewardWorker', () => ({
 }));
 
 jest.mock('../../src/models/task', () => ({
-  completeTaskIfFull: jest.fn().mockResolvedValue(false),
+  claimCompletionSlot: jest
+    .fn()
+    .mockResolvedValue({ claimed: true, taskCompleted: false }),
 }));
 
 jest.mock('../../src/services/notificationService', () => ({
@@ -66,12 +72,13 @@ const mockPrisma = prisma as unknown as {
   taskClaim: { findFirst: jest.Mock };
   proof: {
     create: jest.Mock;
+    delete: jest.Mock;
     findUnique: jest.Mock;
     findMany: jest.Mock;
     count: jest.Mock;
     update: jest.Mock;
   };
-  proofPhoto: { create: jest.Mock };
+  proofPhoto: { create: jest.Mock; deleteMany: jest.Mock };
   verification: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -91,6 +98,10 @@ function userToken(): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+    uploadToIPFS: jest.Mock;
+  };
+  uploadToIPFS.mockResolvedValue('mock-cid-test');
   mockPrisma.$transaction.mockImplementation(async (arg: unknown) => {
     // Interactive-transaction form used by submitProof: the callback receives
     // the mock client itself, so tx.task/tx.taskClaim/... hit the same mocks.
@@ -144,10 +155,6 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         claimId: 'claim-1',
         status: 'PENDING',
-      });
-      mockPrisma.proof.findUnique.mockResolvedValue({
-        id: 'proof-1',
-        status: 'PENDING',
         photos: [{ id: 'photo-1', cid: 'mock-cid-test', filename: 'test-proof.jpg' }],
         verifications: [],
       });
@@ -172,9 +179,21 @@ describe('Proof Routes', () => {
       );
       expect(mockPrisma.proof.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ claimId: 'claim-1' }),
+          data: expect.objectContaining({
+            claimId: 'claim-1',
+            photos: {
+              create: [
+                expect.objectContaining({
+                  cid: 'mock-cid-test',
+                  filename: 'test-proof.jpg',
+                }),
+              ],
+            },
+          }),
+          include: { photos: true, verifications: true },
         }),
       );
+      expect(mockPrisma.proofPhoto.create).not.toHaveBeenCalled();
       expect(res.headers['x-request-id']).toBeDefined();
       const { enqueueVerification } = jest.requireMock(
         '../../src/workers/verificationWorker',
@@ -218,6 +237,174 @@ describe('Proof Routes', () => {
         }),
       );
       expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+    });
+
+    it('removes the temp file and creates no rows when IPFS upload fails', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        lat: -1.2921,
+        lng: 36.8219,
+        radiusMeters: 100,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      const uploadPaths: string[] = [];
+      const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+        uploadToIPFS: jest.Mock;
+      };
+      uploadToIPFS.mockImplementationOnce(async (filePath: string) => {
+        uploadPaths.push(filePath);
+        throw new Error('IPFS unavailable');
+      });
+
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('failed to process proof photos');
+      expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+      expect(mockPrisma.proofPhoto.create).not.toHaveBeenCalled();
+      expect(uploadPaths).toHaveLength(1);
+      expect(uploadPaths.every((filePath) => !fs.existsSync(filePath))).toBe(true);
+    });
+
+    it('does not persist a partial photo set when the second upload fails', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        lat: -1.2921,
+        lng: 36.8219,
+        radiusMeters: 100,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      const uploadPaths: string[] = [];
+      const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+        uploadToIPFS: jest.Mock;
+      };
+      uploadToIPFS.mockImplementation(async (filePath: string) => {
+        uploadPaths.push(filePath);
+        if (uploadPaths.length === 2) throw new Error('second upload failed');
+        return `cid-${uploadPaths.length}`;
+      });
+
+      const fixture = path.join(__dirname, '../fixtures/test-proof.jpg');
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .attach('photos', fixture)
+        .attach('photos', fixture)
+        .attach('photos', fixture);
+
+      expect(res.status).toBe(500);
+      expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+      expect(mockPrisma.proofPhoto.create).not.toHaveBeenCalled();
+      expect(uploadPaths).toHaveLength(3);
+      expect(uploadPaths.every((filePath) => !fs.existsSync(filePath))).toBe(true);
+    });
+
+    it('allows a clean retry after an upload failure', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        lat: -1.2921,
+        lng: 36.8219,
+        radiusMeters: 100,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      mockPrisma.proof.create.mockResolvedValue({
+        id: 'proof-retry',
+        userId: 'user-id',
+        taskId: 'task-1',
+        claimId: 'claim-1',
+        status: 'PENDING',
+        photos: [{ id: 'photo-retry', cid: 'retry-cid' }],
+        verifications: [],
+      });
+      const uploadPaths: string[] = [];
+      const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+        uploadToIPFS: jest.Mock;
+      };
+      uploadToIPFS
+        .mockImplementationOnce(async (filePath: string) => {
+          uploadPaths.push(filePath);
+          throw new Error('temporary IPFS failure');
+        })
+        .mockImplementationOnce(async (filePath: string) => {
+          uploadPaths.push(filePath);
+          return 'retry-cid';
+        });
+
+      const fixture = path.join(__dirname, '../fixtures/test-proof.jpg');
+      const first = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .attach('photos', fixture);
+      expect(first.status).toBe(500);
+      expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+
+      const second = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .attach('photos', fixture);
+
+      expect(second.status).toBe(201);
+      expect(second.body.id).toBe('proof-retry');
+      expect(mockPrisma.proof.create).toHaveBeenCalledTimes(1);
+      expect(uploadPaths).toHaveLength(2);
+      expect(uploadPaths.every((filePath) => !fs.existsSync(filePath))).toBe(true);
+    });
+
+    it('removes the committed proof when verification enqueue fails', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        lat: -1.2921,
+        lng: 36.8219,
+        radiusMeters: 100,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      mockPrisma.proof.create.mockResolvedValue({
+        id: 'proof-1',
+        userId: 'user-id',
+        taskId: 'task-1',
+        claimId: 'claim-1',
+        status: 'PENDING',
+        photos: [{ id: 'photo-1', cid: 'mock-cid-test' }],
+        verifications: [],
+      });
+      const { enqueueVerification } = jest.requireMock(
+        '../../src/workers/verificationWorker',
+      ) as { enqueueVerification: jest.Mock };
+      enqueueVerification.mockRejectedValueOnce(new Error('queue unavailable'));
+      const uploadPaths: string[] = [];
+      const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+        uploadToIPFS: jest.Mock;
+      };
+      uploadToIPFS.mockImplementationOnce(async (filePath: string) => {
+        uploadPaths.push(filePath);
+        return 'mock-cid-test';
+      });
+
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
+
+      expect(res.status).toBe(500);
+      expect(mockPrisma.proofPhoto.deleteMany).toHaveBeenCalledWith({
+        where: { proofId: 'proof-1' },
+      });
+      expect(mockPrisma.proof.delete).toHaveBeenCalledWith({
+        where: { id: 'proof-1' },
+      });
+      expect(uploadPaths.every((filePath) => !fs.existsSync(filePath))).toBe(true);
     });
   });
 
@@ -329,9 +516,9 @@ describe('Proof Routes', () => {
         id: 'task-1',
         status: 'ACTIVE',
         maxCompletions: 5,
+        completedCount: 5,
       });
       mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
-      mockPrisma.proof.count.mockResolvedValue(5);
       const res = await request(app)
         .post('/proofs')
         .set('Authorization', `Bearer ${userToken()}`)
@@ -346,18 +533,14 @@ describe('Proof Routes', () => {
         id: 'task-1',
         status: 'ACTIVE',
         maxCompletions: 5,
+        completedCount: 2,
       });
       mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
-      mockPrisma.proof.count.mockResolvedValue(2);
       mockPrisma.proof.create.mockResolvedValue({
         id: 'proof-1',
         userId: 'user-id',
         taskId: 'task-1',
         claimId: 'claim-1',
-        status: 'PENDING',
-      });
-      mockPrisma.proof.findUnique.mockResolvedValue({
-        id: 'proof-1',
         status: 'PENDING',
         photos: [],
         verifications: [],
@@ -458,7 +641,7 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.update.mockResolvedValue({});
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
@@ -472,8 +655,8 @@ describe('Proof Routes', () => {
         .set('Authorization', `Bearer ${adminToken()}`)
         .send({ verdict: 'rejected', notes: 'GPS outside radius' });
       expect(res.status).toBe(200);
-      expect(mockPrisma.proof.update).toHaveBeenCalledWith({
-        where: { id: 'proof-1' },
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+        where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
         data: { status: 'REJECTED' },
       });
       expect(mockPrisma.verification.create).toHaveBeenCalledWith({
@@ -486,7 +669,7 @@ describe('Proof Routes', () => {
       });
     });
 
-    it('approves a proof, completes capacity and enqueues the payout', async () => {
+    it('approves a proof, completes capacity and creates payout outbox row', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
@@ -494,8 +677,9 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.update.mockResolvedValue({});
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.verification.create.mockResolvedValue({});
+      mockPrisma.rewardPayout.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
         status: 'APPROVED',
@@ -503,13 +687,10 @@ describe('Proof Routes', () => {
         verifications: [],
       });
 
-      const { completeTaskIfFull } = jest.requireMock('../../src/models/task') as {
-        completeTaskIfFull: jest.Mock;
+      const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+        claimCompletionSlot: jest.Mock;
       };
-      completeTaskIfFull.mockResolvedValue(true);
-      const { enqueueRewardPayout } = jest.requireMock(
-        '../../src/workers/rewardWorker',
-      ) as { enqueueRewardPayout: jest.Mock };
+      claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: true });
 
       const res = await request(app)
         .post('/proofs/proof-1/review')
@@ -517,11 +698,10 @@ describe('Proof Routes', () => {
         .send({ verdict: 'approved' });
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('APPROVED');
-      expect(completeTaskIfFull).toHaveBeenCalledWith('task-1');
-      expect(enqueueRewardPayout).toHaveBeenCalledWith(
-        'proof-1',
-        res.headers['x-request-id'],
-      );
+      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+      expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ proofId: 'proof-1' }),
+      });
     });
   });
 });

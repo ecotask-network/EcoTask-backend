@@ -69,7 +69,7 @@ async function seed(): Promise<void> {
     id: `${RUN}-t-${i + 1}`,
     title: `Task ${i + 1}`,
     type: ['cleanup', 'planting', 'recycling'][i % 3],
-    rewardAmount: 50,
+    rewardAmountMicros: 500000000n,
     lat: -1.2921,
     lng: 36.8219,
     radiusMeters: 100,

@@ -2,8 +2,7 @@ import prisma from '../utils/prisma.js';
 import config from '../config/default.js';
 import logger from '../utils/logger.js';
 import { notifyProofStatus } from './notificationService.js';
-import { completeTaskIfFull } from '../models/task.js';
-import { enqueueRewardPayout } from '../workers/rewardWorker.js';
+import { claimCompletionSlot } from '../models/task.js';
 
 const AUTO_VERIFIER_ID = 'quorum';
 
@@ -165,24 +164,46 @@ async function finalizeProof(
   submitted: { validatorId: string; verdict: string | null }[],
   requestId?: string,
 ): Promise<QuorumOutcome> {
-  const status = verdict === 'approved' ? 'APPROVED' : 'REJECTED';
-
+  const requestedStatus = verdict === 'approved' ? 'APPROVED' : 'REJECTED';
   const agreement = submitted.filter((v) => v.verdict === verdict);
   const disagreement = submitted.filter((v) => v.verdict !== verdict);
 
-  // The proof status update, the Verification record, the validator
-  // reputation adjustments, and the notification (+ its outbox row) are all
-  // committed in one interactive transaction. A crash after this commits but
-  // before/during the (out-of-band) notify step is no longer possible,
-  // because the notification is created here, inside the same transaction.
-  const proof = await prisma.$transaction(async (tx) => {
-    await tx.proof.update({ where: { id: proofId }, data: { status } });
+  const result = await prisma.$transaction(async (tx) => {
+    const proofRow = await tx.proof.findUnique({
+      where: { id: proofId },
+      select: { taskId: true, status: true },
+    });
+    if (!proofRow) return null;
+    if (proofRow.status === 'APPROVED' || proofRow.status === 'REJECTED') {
+      return null;
+    }
+
+    let finalStatus: 'APPROVED' | 'REJECTED' = requestedStatus;
+    let taskCompleted = false;
+    let notes = `quorum of ${agreement.length} validators`;
+
+    if (requestedStatus === 'APPROVED') {
+      const slot = await claimCompletionSlot(tx, proofRow.taskId);
+      if (!slot.claimed) {
+        finalStatus = 'REJECTED';
+        notes += ' [auto-rejected: task reached max completions]';
+      } else {
+        taskCompleted = slot.taskCompleted;
+      }
+    }
+
+    const { count } = await tx.proof.updateMany({
+      where: { id: proofId, status: { in: ['PENDING', 'VERIFYING'] } },
+      data: { status: finalStatus },
+    });
+    if (count === 0) return null;
+
     await tx.verification.create({
       data: {
         proofId,
         verifierId: AUTO_VERIFIER_ID,
         verdict,
-        notes: `quorum of ${agreement.length} validators`,
+        notes,
       },
     });
 
@@ -205,22 +226,35 @@ async function finalizeProof(
     });
     if (proofRecord) {
       if (requestId) {
-        await notifyProofStatus(proofRecord.userId, proofId, status, tx, requestId);
+        await notifyProofStatus(proofRecord.userId, proofId, finalStatus, tx, requestId);
       } else {
-        await notifyProofStatus(proofRecord.userId, proofId, status, tx);
+        await notifyProofStatus(proofRecord.userId, proofId, finalStatus, tx);
       }
     }
-    return proofRecord;
+
+    if (finalStatus === 'APPROVED') {
+      await tx.rewardPayout.create({
+        data: {
+          proofId,
+          ...(requestId ? { requestId } : {}),
+        },
+      });
+    }
+
+    return { proofRecord, finalStatus, taskCompleted };
   });
 
-  if (proof && status === 'APPROVED') {
-    const completed = await completeTaskIfFull(proof.taskId);
-    if (completed) {
-      logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
+  if (result?.proofRecord && result.finalStatus === 'APPROVED') {
+    if (result.taskCompleted) {
+      logger.info('Task reached capacity and was completed', {
+        taskId: result.proofRecord.taskId,
+      });
     }
-    await enqueueRewardPayout(proofId, requestId);
   }
 
-  logger.info('Quorum reached, proof finalized', { proofId, status });
-  return { finalized: true, status };
+  logger.info('Quorum reached, proof finalized', {
+    proofId,
+    status: result?.finalStatus ?? requestedStatus,
+  });
+  return { finalized: true, status: result?.finalStatus ?? requestedStatus };
 }

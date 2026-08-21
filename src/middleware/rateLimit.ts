@@ -8,8 +8,7 @@ export interface PerUserLimitOptions {
   windowMs: number;
   max: number;
   scope: string;
-  failClosed?: boolean;
-  errorMessage?: string;
+  keyFn?: (req: Request) => string;
 }
 
 /**
@@ -18,7 +17,9 @@ export interface PerUserLimitOptions {
  */
 export function perUserLimiter(options: PerUserLimitOptions) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const clientId = req.user?.userId || req.ip || 'unknown';
+    const clientId = options.keyFn
+      ? options.keyFn(req)
+      : req.user?.userId || req.ip || 'unknown';
     const key = `rl:${options.scope}:${clientId}`;
 
     try {
@@ -78,4 +79,12 @@ export const claimLimiter = perUserLimiter({
   windowMs: config.rateLimit.claimWindowMs,
   max: config.rateLimit.claimMax,
   scope: 'task-claim',
+});
+
+export const challengeIssueLimiter = perUserLimiter({
+  windowMs: config.auth.challengeIssueWindowMs,
+  max: config.auth.challengeIssueMax,
+  scope: 'challenge-issue',
+  keyFn: (req) =>
+    typeof req.query.wallet === 'string' ? req.query.wallet : req.ip || 'unknown',
 });
