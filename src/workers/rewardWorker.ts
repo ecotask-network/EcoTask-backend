@@ -103,6 +103,7 @@ export function startRewardWorker(): void {
             taskId: proof.taskId,
             amount: proof.task.rewardAmountMicros.toString(),
             assetCode: proof.task.rewardToken || 'ECO',
+            payoutId,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
