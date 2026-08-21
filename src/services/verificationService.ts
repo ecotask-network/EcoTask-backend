@@ -101,8 +101,22 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
   // validators) if the remaining signals are otherwise plausible, but never
   // as an automatic approval.
   const hasPhotos = proof.photos.length > 0;
+  // Non-spoofable server-side proof signal: the hash of the uploaded file is
+  // derived from the actual bytes on disk in the backend, so a client cannot
+  // forge EXIF/GPS metadata to satisfy the auto-approval gate. This is the
+  // minimum proof-of-capture invariant required for an automatic approval.
+  const hasServerProofSignal = proof.photos.some((photo) => Boolean(photo.sha256));
 
-  if (score >= 0.7 && hasPhotos) return { verdict: 'approved', confidence: score };
+  if (score >= 0.7 && hasPhotos && hasServerProofSignal) {
+    return { verdict: 'approved', confidence: score };
+  }
+  if (score >= 0.7 && hasPhotos && !hasServerProofSignal) {
+    return {
+      verdict: 'inconclusive',
+      confidence: score,
+      notes: 'missing_server_proof_signal',
+    };
+  }
   if (score >= 0.4) return { verdict: 'inconclusive', confidence: score };
   return {
     verdict: 'rejected',
