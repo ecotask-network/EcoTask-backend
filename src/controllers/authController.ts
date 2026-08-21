@@ -7,27 +7,29 @@ import config from '../config/default.js';
 import { generateChallenge, verifyStellarSignature } from '../services/stellarService.js';
 import { findOrCreateUser } from '../models/user.js';
 import { loginSchema } from '../utils/validation.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
+import logger from '../utils/logger.js';
 
-const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const CHALLENGE_KEY_PREFIX = 'login_challenge:';
 
-const challenges = new Map<string, { challenge: string; expiresAt: number }>();
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [wallet, entry] of challenges) {
-    if (entry.expiresAt < now) challenges.delete(wallet);
-  }
-}, CHALLENGE_TTL_MS).unref();
-
-export function getChallenge(req: Request, res: Response) {
+export async function getChallenge(req: Request, res: Response) {
   const wallet = req.query.wallet as string;
   if (!wallet || wallet.length !== 56) {
     return res.status(400).json({ error: 'invalid wallet address' });
   }
 
   const challenge = generateChallenge();
-  challenges.set(wallet, { challenge, expiresAt: Date.now() + CHALLENGE_TTL_MS });
+  try {
+    const client = rateLimiter.getClient();
+    await client.set(
+      `${CHALLENGE_KEY_PREFIX}${wallet}`,
+      challenge,
+      'PX',
+      config.auth.challengeTtlMs,
+    );
+  } catch (err) {
+    logger.error('Redis error while storing login challenge', { err });
+    return res.status(503).json({ error: 'auth service unavailable' });
+  }
   return res.json({ challenge });
 }
 
@@ -40,9 +42,22 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const { wallet, signature, challenge } = parsed.data;
+  const key = `${CHALLENGE_KEY_PREFIX}${wallet}`;
 
-  const stored = challenges.get(wallet);
-  if (!stored || stored.challenge !== challenge || stored.expiresAt < Date.now()) {
+  // GETDEL atomically reads and deletes the stored challenge in one round
+  // trip, so concurrent logins racing on the same challenge can never both
+  // observe it: at most one caller gets the value back, every other caller
+  // gets null and falls through to the 401 below.
+  let stored: string | null;
+  try {
+    const client = rateLimiter.getClient();
+    stored = await client.getdel(key);
+  } catch (err) {
+    logger.error('Redis error while consuming login challenge', { err });
+    return res.status(503).json({ error: 'auth service unavailable' });
+  }
+
+  if (!stored || stored !== challenge) {
     return res.status(401).json({ error: 'invalid or expired challenge' });
   }
 
@@ -51,8 +66,6 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   if (!isValid) {
     return res.status(401).json({ error: 'invalid signature' });
   }
-
-  challenges.delete(wallet);
 
   const user = await findOrCreateUser(wallet);
   const token = jwt.sign({ userId: user.id, wallet: user.wallet }, config.jwt.secret, {

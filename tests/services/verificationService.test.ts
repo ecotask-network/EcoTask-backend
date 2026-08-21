@@ -283,4 +283,82 @@ describe('VerificationService', () => {
     expect(result.verdict).toBe('inconclusive');
     expect(result.confidence).toBe(0.55);
   });
+
+  // ── Photo gate: no combination of GPS/duplicate/expiry checks may
+  //    auto-approve a proof with zero photos (see autoVerify's `hasPhotos`
+  //    gate). Table-driven over {photos} x {radius} x {expiry}. ────────────
+  describe('photo gate score matrix', () => {
+    const IN_RADIUS = { lat: -1.2921, lng: 36.8219 };
+    const OUT_OF_RADIUS = { lat: 0.0, lng: 0.0 };
+    const yesterday = new Date(Date.now() - 86400000);
+
+    function buildProof(opts: {
+      hasPhotos: boolean;
+      inRadius: boolean;
+      expired: boolean;
+    }) {
+      const proofCreatedAt = new Date();
+      const gps = opts.inRadius ? IN_RADIUS : OUT_OF_RADIUS;
+      const photos = opts.hasPhotos
+        ? [
+            {
+              id: 'photo-1',
+              cid: 'cid-1',
+              filename: 'test.jpg',
+              sha256: 'clean-hash',
+              width: 4032,
+              height: 3024,
+              capturedAt: proofCreatedAt,
+            },
+          ]
+        : [];
+
+      return {
+        id: 'proof-matrix',
+        lat: gps.lat,
+        lng: gps.lng,
+        createdAt: proofCreatedAt,
+        photos,
+        task: makeTask({ expiresAt: opts.expired ? yesterday : null }),
+      };
+    }
+
+    it.each([
+      // hasPhotos, inRadius, expired, expectedVerdict, expectedConfidence
+      [true, true, false, 'approved', 1.05],
+      [true, true, true, 'approved', 0.85],
+      [true, false, false, 'inconclusive', 0.65],
+      [true, false, true, 'inconclusive', 0.45],
+      // Photo-less proofs: never approved, regardless of how favorable the
+      // remaining GPS/expiry signals are — this is the regression guard for
+      // the auto-approval bug (in-radius + no-expiry used to score 0.75 and
+      // clear the 0.7 approval threshold with zero photographic evidence).
+      [false, true, false, 'inconclusive', 0.75],
+      [false, true, true, 'inconclusive', 0.55],
+      [false, false, false, 'rejected', 0.35],
+      [false, false, true, 'rejected', 0.15],
+    ] as const)(
+      'hasPhotos=%s inRadius=%s expired=%s → %s (confidence %s)',
+      async (hasPhotos, inRadius, expired, expectedVerdict, expectedConfidence) => {
+        mockPrisma.proof.findUnique.mockResolvedValue(
+          buildProof({ hasPhotos, inRadius, expired }),
+        );
+
+        const result = await autoVerify('proof-matrix');
+
+        expect(result.verdict).toBe(expectedVerdict);
+        expect(result.confidence).toBeCloseTo(expectedConfidence, 10);
+      },
+    );
+
+    it('never approves a no-photos proof even when GPS and expiry are both favorable', async () => {
+      mockPrisma.proof.findUnique.mockResolvedValue(
+        buildProof({ hasPhotos: false, inRadius: true, expired: false }),
+      );
+
+      const result = await autoVerify('proof-matrix');
+
+      expect(result.verdict).not.toBe('approved');
+    });
+  });
 });
