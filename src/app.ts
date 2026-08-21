@@ -28,6 +28,7 @@ import { shutdownRewardWorker } from './workers/rewardWorker.js';
 import { shutdownNotificationWorker } from './workers/notificationWorker.js';
 import { stopExpirySweeper } from './workers/expiryWorker.js';
 import { stopOutboxSweeper } from './workers/notificationOutboxSweeper.js';
+import { stopRewardPayoutSweeper } from './services/rewardPayoutSweeper.js';
 
 if (process.env.NODE_ENV !== 'test') {
   import('./workers/verificationWorker.js');
@@ -111,6 +112,9 @@ async function drainWorkersAndDb(): Promise<void> {
   await safeStep('stop notification outbox sweeper', () => stopOutboxSweeper());
   logger.info('Notification outbox sweeper stopped');
 
+  await safeStep('stop reward payout sweeper', () => stopRewardPayoutSweeper());
+  logger.info('Reward payout sweeper stopped');
+
   await safeStep('disconnect prisma client', () => prisma.$disconnect());
   logger.info('Prisma client disconnected');
 }
@@ -163,49 +167,6 @@ if (process.env.NODE_ENV !== 'test') {
 
   process.on('SIGTERM', () => void gracefulShutdown('SIGTERM received', 0));
   process.on('SIGINT', () => void gracefulShutdown('SIGINT received', 0));
- 
-  const shutdown = async (signal: string) => {
-    logger.info(`${signal} received, starting graceful shutdown`);
-    server.close(async () => {
-      logger.info('HTTP server closed');
-
-      const [{ shutdownVerificationWorker }, { shutdownRewardWorker }] =
-        await Promise.all([
-          import('./workers/verificationWorker.js'),
-          import('./workers/rewardWorker.js'),
-        ]);
-      await Promise.all([shutdownVerificationWorker(), shutdownRewardWorker()]);
-      logger.info('Background workers shut down');
-
-      const { shutdownNotificationWorker } =
-        await import('./workers/notificationWorker.js');
-      await shutdownNotificationWorker();
-      logger.info('Notification dispatch worker shut down');
-
-      const { stopExpirySweeper } = await import('./workers/expiryWorker.js');
-      stopExpirySweeper();
-      logger.info('Expiry sweeper stopped');
-
-      const { stopOutboxSweeper } =
-        await import('./workers/notificationOutboxSweeper.js');
-      stopOutboxSweeper();
-      logger.info('Notification outbox sweeper stopped');
-
-      const { stopRewardPayoutSweeper } =
-        await import('./services/rewardPayoutSweeper.js');
-      stopRewardPayoutSweeper();
-      logger.info('Reward payout sweeper stopped');
-
-      await prisma.$disconnect();
-      logger.info('Prisma client disconnected');
-      process.exit(0);
-    });
-
-    setTimeout(() => {
-      logger.error('Forced shutdown after timeout');
-      process.exit(1);
-    }, 10000);
-  };
 }
 
 export default app;
