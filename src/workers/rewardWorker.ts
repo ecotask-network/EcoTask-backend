@@ -1,14 +1,12 @@
 import { Worker, Queue } from 'bullmq';
+import type { ConnectionOptions } from 'bullmq';
 import { submitReward } from '../services/stellarService';
-import config from '../config/default';
-import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let connection: any = null;
 let queue: Queue<RewardJobData> | null = null;
 let worker: Worker<RewardJobData> | null = null;
 const queueName = QUEUE_NAMES.rewardPayout;
@@ -20,13 +18,10 @@ export interface RewardJobData {
   requestId?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getConnection(): any {
-  if (!connection) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
-  }
-  return connection;
+// BullMQ bundles its own ioredis; the cast is purely type-level — it is the
+// same shared ioredis client at runtime.
+function getConnection(): ConnectionOptions {
+  return redisConnectionManager.getClient() as ConnectionOptions;
 }
 
 function getQueue(): Queue<RewardJobData> {
@@ -167,10 +162,6 @@ export async function shutdownRewardWorker(): Promise<void> {
   if (queue) {
     await queue.close();
     queue = null;
-  }
-  if (connection) {
-    await connection.quit();
-    connection = null;
   }
   logger.info('Reward worker shut down');
 }

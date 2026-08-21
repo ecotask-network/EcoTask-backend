@@ -1,23 +1,8 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 
 const router = Router();
-
-let healthRedis: any = null;
-
-async function getRedisClient() {
-  if (!healthRedis) {
-    const mod = await import('ioredis');
-    const Redis = (mod.default ?? mod) as any;
-    healthRedis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-      lazyConnect: true,
-      maxRetriesPerRequest: 1,
-      commandTimeout: 1500,
-      enableOfflineQueue: false
-    });
-  }
-  return healthRedis;
-}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -40,17 +25,13 @@ router.get('/', async (_req: Request, res: Response) => {
   try {
     await withTimeout(prisma.$queryRaw`SELECT 1`, 1500);
     checks.database = 'ok';
-  } catch (err: any) {
-    checks.database = err.message === 'timeout' ? 'timeout' : 'error';
+  } catch (err) {
+    checks.database =
+      err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error';
   }
 
-  try {
-    const redis = await getRedisClient();
-    await withTimeout(redis.ping(), 1500);
-    checks.redis = 'ok';
-  } catch (err: any) {
-    checks.redis = err.message === 'timeout' ? 'timeout' : 'error';
-  }
+  const redis = await redisConnectionManager.healthCheck(1500);
+  checks.redis = redis.healthy ? 'ok' : redis.status;
 
   const allOk = Object.values(checks).every((v) => v === 'ok');
   const status = allOk ? 200 : 503;

@@ -1,6 +1,6 @@
-import IORedis from 'ioredis';
-import config from '../config/default.js';
+import type { Redis } from 'ioredis';
 import logger from '../utils/logger.js';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -11,23 +11,14 @@ export interface RateLimitResult {
 /**
  * Redis-backed fixed-window counter rate limiter.
  *
- * The Redis client is created lazily and any Redis failure is surfaced to the
- * caller so middleware can fail open instead of blocking traffic.
+ * The underlying Redis client is shared with the auth challenge/denylist store
+ * and the BullMQ queues via {@link redisConnectionManager}, and is created
+ * lazily. Any Redis failure is surfaced to the caller so middleware can fail
+ * open instead of blocking traffic.
  */
 export class RedisRateLimiter {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private client: any = null;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  getClient(): any {
-    if (!this.client) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.client = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
-      this.client.on('error', () => {
-        // A failing Redis connection must not crash the API; middleware fails open.
-      });
-    }
-    return this.client;
+  getClient(): Redis {
+    return redisConnectionManager.getClient();
   }
 
   async check(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
