@@ -327,7 +327,7 @@ export async function reviewProof(req: Request, res: Response) {
       verdict,
       notes: parsed.data.notes,
       requestId: req.requestId,
-      expectedStatuses: ['PENDING'],
+      expectedStatuses: ['PENDING', 'VERIFYING'],
     });
   } catch (err: any) {
     if (err.name === 'ProofFinalizationError') {

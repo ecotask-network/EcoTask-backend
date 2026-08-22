@@ -88,7 +88,7 @@ const worker = new Worker<VerificationJobData>(
             verdict: result.verdict,
             notes: result.notes || `confidence: ${result.confidence}`,
             requestId,
-            expectedStatuses: ['VERIFYING'],
+            expectedStatuses: ['PENDING', 'VERIFYING'],
           });
           finalStatus = res.finalStatus;
           taskCompleted = res.taskCompleted;

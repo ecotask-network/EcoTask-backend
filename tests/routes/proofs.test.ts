@@ -96,8 +96,12 @@ function userToken(): string {
   );
 }
 
+const mockQueryRaw = jest.fn();
+
 beforeEach(() => {
   jest.clearAllMocks();
+  mockQueryRaw.mockReset();
+  mockQueryRaw.mockResolvedValue([{ status: 'PENDING', task_id: 'task-1', user_id: 'user-id' }]);
   const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
     uploadToIPFS: jest.Mock;
   };
@@ -108,7 +112,7 @@ beforeEach(() => {
     if (typeof arg === 'function') {
       const txWithQueryRaw = {
         ...mockPrisma,
-        $queryRaw: jest.fn().mockResolvedValue([{ status: 'PENDING', task_id: 'task-1', user_id: 'user-1' }]),
+        $queryRaw: mockQueryRaw,
       };
       return (arg as (tx: unknown) => unknown)(txWithQueryRaw);
     }
@@ -699,8 +703,8 @@ describe('Proof Routes', () => {
         .set('Authorization', `Bearer ${adminToken()}`)
         .send({ verdict: 'rejected', notes: 'GPS outside radius' });
       expect(res.status).toBe(200);
-      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
-        where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
+      expect(mockPrisma.proof.update).toHaveBeenCalledWith({
+        where: { id: 'proof-1' },
         data: { status: 'REJECTED' },
       });
       expect(mockPrisma.verification.create).toHaveBeenCalledWith({

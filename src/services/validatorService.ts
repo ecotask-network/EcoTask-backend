@@ -177,7 +177,7 @@ async function finalizeProof(
       verdict,
       notes: `quorum of ${agreement.length} validators`,
       requestId,
-      expectedStatuses: ['VERIFYING'],
+      expectedStatuses: ['PENDING', 'VERIFYING'],
     });
   } catch (err: any) {
     if (err.name === 'ProofFinalizationError') {
