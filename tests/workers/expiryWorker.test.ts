@@ -2,6 +2,7 @@ import { startExpirySweeper, stopExpirySweeper } from '../../src/workers/expiryW
 
 jest.mock('../../src/services/taskService', () => ({
   expireOverdueTasks: jest.fn(),
+  recoverOrphanedProofs: jest.fn(),
 }));
 
 jest.mock('../../src/utils/logger', () => ({
@@ -14,7 +15,7 @@ jest.mock('../../src/config/default', () => ({
   default: { expirySweepIntervalMs: 60000 },
 }));
 
-import { expireOverdueTasks } from '../../src/services/taskService';
+import { expireOverdueTasks, recoverOrphanedProofs } from '../../src/services/taskService';
 
 describe('Expiry Worker', () => {
   beforeEach(() => {
@@ -33,13 +34,17 @@ describe('Expiry Worker', () => {
       tasksExpired: 0,
       claimsExpired: 0,
     });
+    (recoverOrphanedProofs as jest.Mock).mockResolvedValue(0);
     jest.useFakeTimers();
 
     startExpirySweeper(60000);
 
     expect(expireOverdueTasks).toHaveBeenCalledTimes(1);
+    expect(recoverOrphanedProofs).toHaveBeenCalledTimes(1);
+    
     jest.advanceTimersByTime(60000);
     expect(expireOverdueTasks).toHaveBeenCalledTimes(2);
+    expect(recoverOrphanedProofs).toHaveBeenCalledTimes(2);
   });
 
   it('stopExpirySweeper halts further sweeps', () => {
@@ -47,6 +52,7 @@ describe('Expiry Worker', () => {
       tasksExpired: 0,
       claimsExpired: 0,
     });
+    (recoverOrphanedProofs as jest.Mock).mockResolvedValue(0);
     jest.useFakeTimers();
 
     startExpirySweeper(60000);
@@ -54,5 +60,6 @@ describe('Expiry Worker', () => {
     jest.advanceTimersByTime(60000 * 3);
 
     expect(expireOverdueTasks).toHaveBeenCalledTimes(1);
+    expect(recoverOrphanedProofs).toHaveBeenCalledTimes(1);
   });
 });

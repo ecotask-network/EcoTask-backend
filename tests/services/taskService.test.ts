@@ -63,3 +63,51 @@ describe('Task service: expiry sweep', () => {
   });
 });
 
+jest.mock('../../src/services/proofFinalizationService', () => ({
+  finalizeProofStatus: jest.fn(),
+}));
+
+import { recoverOrphanedProofs } from '../../src/services/taskService';
+import { finalizeProofStatus } from '../../src/services/proofFinalizationService';
+
+const mockFinalizeProofStatus = finalizeProofStatus as jest.Mock;
+
+describe('Task service: orphaned proofs recovery', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('finds orphaned proofs and rejects them', async () => {
+    (mockPrisma.proof as any).findMany = jest.fn().mockResolvedValue([
+      { id: 'proof-1' },
+      { id: 'proof-2' },
+    ]);
+    mockFinalizeProofStatus.mockResolvedValue({
+      finalStatus: 'REJECTED',
+      taskCompleted: false,
+      proofRecord: { userId: 'u1', taskId: 't1' },
+    });
+
+    const recovered = await recoverOrphanedProofs();
+
+    expect(recovered).toBe(2);
+    expect((mockPrisma.proof as any).findMany).toHaveBeenCalledWith({
+      where: {
+        status: 'PENDING',
+        createdAt: { lt: expect.any(Date) },
+      },
+      select: { id: true },
+    });
+
+    expect(mockFinalizeProofStatus).toHaveBeenCalledTimes(2);
+    expect(mockFinalizeProofStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proofId: 'proof-1',
+        verifierId: 'system-sweeper',
+        verdict: 'rejected',
+        expectedStatuses: ['PENDING'],
+      })
+    );
+  });
+});
+
