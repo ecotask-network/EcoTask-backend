@@ -214,6 +214,11 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
+        validatorVotes: [
+          { id: 'vote-0', validatorId: 'v0', verdict: 'approved' },
+          { id: 'vote-1', validatorId: 'v1', verdict: 'approved' },
+          { id: 'vote-2', validatorId: 'v2', verdict: null },
+        ],
       });
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.update.mockResolvedValue({});
@@ -270,6 +275,11 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
+        validatorVotes: [
+          { id: 'vote-0', validatorId: 'v0', verdict: 'approved' },
+          { id: 'vote-1', validatorId: 'v1', verdict: 'approved' },
+          { id: 'vote-2', validatorId: 'v2', verdict: 'rejected' },
+        ],
       });
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.update.mockResolvedValue({});
@@ -309,7 +319,14 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique
         .mockResolvedValueOnce(votesProof(['approved', 'approved']))
         .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' })
-        .mockResolvedValueOnce({ userId: 'owner-1', taskId: 'task-1' })
+        .mockResolvedValueOnce({
+          userId: 'owner-1',
+          taskId: 'task-1',
+          validatorVotes: [
+            { id: 'vote-0', validatorId: 'v0', verdict: 'approved' },
+            { id: 'vote-1', validatorId: 'v1', verdict: 'approved' },
+          ],
+        })
         .mockResolvedValueOnce(votesProof(['approved', 'approved']))
         .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' });
 
@@ -380,6 +397,11 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
+        validatorVotes: [
+          { id: 'vote-0', validatorId: 'v0', verdict: 'rejected' },
+          { id: 'vote-1', validatorId: 'v1', verdict: 'rejected' },
+          { id: 'vote-2', validatorId: 'v2', verdict: null },
+        ],
       });
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.update.mockResolvedValue({});
