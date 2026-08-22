@@ -1,11 +1,12 @@
 import prisma from '../utils/prisma.js';
 import { decodeCursor, encodeCursor } from '../utils/cursor.js';
+import type { Prisma, TaskStatus } from '@prisma/client';
 
 export interface TaskFilters {
   type?: string;
   status?: TaskStatus;
-  minReward?: number;
-  maxReward?: number;
+  minRewardMicros?: bigint;
+  maxRewardMicros?: bigint;
   swLat?: number;
   swLng?: number;
   neLat?: number;
@@ -21,11 +22,11 @@ export async function listTasks(filters: TaskFilters = {}) {
   if (filters.type) where.type = filters.type;
   if (filters.status) where.status = filters.status;
 
-  if (filters.minReward != null || filters.maxReward != null) {
-    const rewardFilter: Record<string, number> = {};
-    if (filters.minReward != null) rewardFilter.gte = filters.minReward;
-    if (filters.maxReward != null) rewardFilter.lte = filters.maxReward;
-    where.rewardAmount = rewardFilter;
+  if (filters.minRewardMicros != null || filters.maxRewardMicros != null) {
+    const rewardFilter: Record<string, bigint> = {};
+    if (filters.minRewardMicros != null) rewardFilter.gte = filters.minRewardMicros;
+    if (filters.maxRewardMicros != null) rewardFilter.lte = filters.maxRewardMicros;
+    where.rewardAmountMicros = rewardFilter;
   }
 
   if (
@@ -56,7 +57,7 @@ export async function listTasks(filters: TaskFilters = {}) {
       // Legacy bare-date cursor with no tie-breaker id: fall back to a
       // createdAt-only comparison for this one page. Rows sharing the
       // cursor's exact createdAt cannot be disambiguated without an id,
-      // so they may be skipped or repeated on this page only — the
+      // so they may be skipped or repeated on this page only â€” the
       // nextCursor we return is always the new composite format, so
       // subsequent pages self-heal.
       where.createdAt = { lt: cursorDate };
@@ -85,7 +86,7 @@ export async function createTask(data: {
   title: string;
   description?: string;
   type: string;
-  rewardAmount: number;
+  rewardAmountMicros: bigint;
   lat: number;
   lng: number;
   radiusMeters?: number;
@@ -101,7 +102,7 @@ export async function updateTask(
     title?: string;
     description?: string;
     type?: string;
-    rewardAmount?: number;
+    rewardAmountMicros?: bigint;
     lat?: number;
     lng?: number;
     radiusMeters?: number;
@@ -117,24 +118,41 @@ export async function deleteTask(id: string) {
   return prisma.task.delete({ where: { id } });
 }
 
-export async function getTaskCompletionCount(taskId: string): Promise<number> {
-  return prisma.proof.count({ where: { taskId, status: 'APPROVED' } });
-}
+export type SlotClaimResult =
+  | { claimed: true; taskCompleted: boolean }
+  | { claimed: false };
 
-export async function completeTaskIfFull(taskId: string): Promise<boolean> {
-  const task = await prisma.task.findUnique({
-    where: { id: taskId },
-    select: { id: true, status: true, maxCompletions: true },
-  });
-  if (!task || task.maxCompletions == null || task.status !== TaskStatus.ACTIVE)
-    return false;
+/**
+ * Atomically claims one completion slot on a task, transitioning it to
+ * COMPLETED if this was the last slot. Must be called inside the same
+ * transaction that sets a proof's status to APPROVED. The UPDATE's WHERE
+ * clause (status ACTIVE AND completedCount < maxCompletions) and the row
+ * lock Postgres takes during the UPDATE make this race-free: concurrent
+ * callers serialize on this row, and a caller that loses the race gets
+ * zero rows back instead of a stale count.
+ */
+type SlotRow = {
+  completed_count: number;
+  max_completions: number | null;
+  status: TaskStatus;
+};
 
-  const completed = await getTaskCompletionCount(taskId);
-  if (completed < task.maxCompletions) return false;
+export async function claimCompletionSlot(
+  tx: Prisma.TransactionClient,
+  taskId: string,
+): Promise<SlotClaimResult> {
+  const rows = await tx.$queryRaw<SlotRow[]>`
+    UPDATE tasks
+    SET completed_count = completed_count + 1,
+        status = CASE
+          WHEN max_completions IS NOT NULL AND completed_count + 1 >= max_completions
+          THEN 'COMPLETED' ELSE status
+        END
+    WHERE id = ${taskId} AND status = 'ACTIVE'
+      AND (max_completions IS NULL OR completed_count < max_completions)
+    RETURNING completed_count, max_completions, status
+  `;
 
-  await prisma.task.update({
-    where: { id: taskId },
-    data: { status: TaskStatus.COMPLETED },
-  });
-  return true;
+  if (rows.length === 0) return { claimed: false };
+  return { claimed: true, taskCompleted: rows[0].status === 'COMPLETED' };
 }

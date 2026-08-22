@@ -1,23 +1,25 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { TaskStatus } from '@prisma/client';
 
 export async function getPlatformAnalytics(_req: Request, res: Response) {
   const [totalTasks, activeTasks, totalUsers, totalProofs, approvedProofs] =
     await Promise.all([
       prisma.task.count(),
-      prisma.task.count({ where: { status: 'ACTIVE' } }),
+      prisma.task.count({ where: { status: TaskStatus.ACTIVE } }),
       prisma.user.count(),
       prisma.proof.count(),
       prisma.proof.findMany({
         where: { status: 'APPROVED' },
-        select: { task: { select: { rewardAmount: true } } },
+        select: { task: { select: { rewardAmountMicros: true } } },
       }),
     ]);
 
-  const totalRewardPaid = approvedProofs.reduce(
-    (sum, proof) => sum + proof.task.rewardAmount,
-    0,
+  const totalRewardPaidMicros = approvedProofs.reduce(
+    (sum, proof) => sum + proof.task.rewardAmountMicros,
+    0n,
   );
+  const totalRewardPaid = Number(totalRewardPaidMicros) / 10000000;
 
   return res.json({
     totals: {
@@ -38,11 +40,11 @@ export async function getTrends(req: Request, res: Response) {
   const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   const rows = await prisma.$queryRaw<
-    Array<{ day: Date; count: number; reward: number }>
+    Array<{ day: Date; count: number; reward_micros: bigint }>
   >`
     SELECT DATE_TRUNC('day', p."created_at")::date AS day,
            COUNT(*)::int AS count,
-           COALESCE(SUM(t."reward_amount"), 0)::float AS reward
+           COALESCE(SUM(t."reward_amount_micros"), 0)::bigint AS reward_micros
     FROM "proofs" p
     JOIN "tasks" t ON p."task_id" = t.id
     WHERE p.status = 'APPROVED'
@@ -56,7 +58,7 @@ export async function getTrends(req: Request, res: Response) {
     points: rows.map((r) => ({
       day: r.day.toISOString().slice(0, 10),
       approvedProofs: Number(r.count),
-      totalReward: Number(r.reward),
+      totalReward: Number(r.reward_micros) / 10000000,
     })),
     timestamp: new Date().toISOString(),
   });

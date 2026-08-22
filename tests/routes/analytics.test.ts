@@ -36,8 +36,8 @@ describe('Analytics Routes', () => {
       mockPrisma.user.count.mockResolvedValue(25);
       mockPrisma.proof.count.mockResolvedValue(100);
       mockPrisma.proof.findMany.mockResolvedValue([
-        { task: { rewardAmount: 50 } },
-        { task: { rewardAmount: 30 } },
+        { task: { rewardAmountMicros: 500000000n } },
+        { task: { rewardAmountMicros: 300000000n } },
       ]);
 
       const res = await request(app).get('/analytics/platform');
@@ -56,8 +56,8 @@ describe('Analytics Routes', () => {
   describe('GET /analytics/trends', () => {
     it('returns a daily series of approved proofs and rewards', async () => {
       mockPrisma.$queryRaw.mockResolvedValue([
-        { day: new Date('2026-08-01T00:00:00Z'), count: 2, reward: 100 },
-        { day: new Date('2026-08-02T00:00:00Z'), count: 1, reward: 50 },
+        { day: new Date('2026-08-01T00:00:00Z'), count: 2, reward_micros: 1000000000n },
+        { day: new Date('2026-08-02T00:00:00Z'), count: 1, reward_micros: 500000000n },
       ]);
 
       const res = await request(app).get('/analytics/trends').query({ days: '7' });

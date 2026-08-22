@@ -194,6 +194,7 @@ npm run dev
 PORT=3000
 NODE_ENV=development
 CORS_ORIGIN=*
+LOG_LEVEL=info
 
 # Database
 DATABASE_URL=postgresql://user:password@localhost:5432/ecotask
@@ -258,6 +259,10 @@ npm run build
 npm run queues:verify-retention
 ```
 
+Production startup rejects missing JWT secrets and all development or
+documentation placeholders stored in this repository. This denial list does not
+measure secret strength; generate a fresh random secret for every deployment.
+
 ---
 
 ## 📡 API Overview
@@ -282,6 +287,14 @@ GET    /api/tasks/:id/claims   # List active claims for a task
 Tasks accept an optional `maxCompletions` capacity; once that many proofs are
 approved the task is auto-marked `COMPLETED`. Overdue `ACTIVE` tasks are
 flipped to `EXPIRED` by a background sweeper (`EXPIRY_SWEEP_INTERVAL_MS`).
+
+**Claims are enforced.** Submitting a proof requires a valid, unexpired claim
+on the task: `POST /api/proofs` returns `403` when the submitter holds no
+active claim, and a claim whose `expiresAt` has passed is rejected at submit
+time even before the background sweeper marks it expired. Each proof is
+stored with the `claimId` of the claim it was submitted under. (Proofs
+created before this rule was introduced are grandfathered: their `claimId`
+is `NULL` and they remain valid.)
 
 ### Proofs
 

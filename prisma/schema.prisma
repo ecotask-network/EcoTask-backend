@@ -32,6 +32,20 @@ enum UserRole {
   ADMIN
 }
 
+enum RewardPayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+enum NotificationOutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD_LETTER
+}
+
 model User {
   id        String   @id @default(uuid())
   wallet    String   @unique
@@ -57,12 +71,13 @@ model Task {
   title     String
   description String?
   type      String
-  rewardAmount Float  @map("reward_amount")
+  rewardAmountMicros BigInt  @map("reward_amount_micros")
   rewardToken String? @map("reward_token")
   lat       Float
   lng       Float
   radiusMeters Float  @default(100) @map("radius_meters")
   maxCompletions Int?   @map("max_completions")
+  completedCount Int    @default(0) @map("completed_count")
   status    TaskStatus @default(ACTIVE)
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
@@ -83,8 +98,11 @@ model TaskClaim {
 
   user User @relation(fields: [userId], references: [id])
   task Task @relation(fields: [taskId], references: [id])
+  proofs Proof[]
 
   @@unique([taskId, userId])
+  // getTaskClaims: WHERE task_id = ? AND status = 'active' AND expires_at > now()
+  @@index([taskId, status])
   @@map("task_claims")
 }
 
@@ -93,6 +111,10 @@ model Proof {
   userId    String      @map("user_id")
   taskId    String      @map("task_id")
   status    ProofStatus @default(PENDING)
+  // The TaskClaim this proof was submitted under. NULL only for historical
+  // proofs created before claims were enforced (grandfathered, see migration
+  // 20260818010000_add_proof_claim_relation).
+  claimId   String?     @map("claim_id")
   lat       Float?
   lng       Float?
   notes     String?
@@ -102,10 +124,20 @@ model Proof {
 
   user       User          @relation(fields: [userId], references: [id])
   task       Task          @relation(fields: [taskId], references: [id])
+  claim      TaskClaim?    @relation(fields: [claimId], references: [id])
   photos     ProofPhoto[]
   verifications Verification[]
   validatorVotes ValidatorVote[]
+  rewardPayout RewardPayout?
 
+  // Hot-path query shapes (see docs/index-verification.md):
+  //  - (user_id, status): getUserImpact aggregation
+  //  - (status, created_at): admin review queue listPendingProofs
+  //    (equality on status, sort on created_at)
+  //  - (task_id, status): capacity checks + completeTaskIfFull
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([taskId, status])
   @@map("proofs")
 }
 
@@ -121,7 +153,13 @@ model ProofPhoto {
 
   proof Proof @relation(fields: [proofId], references: [id])
 
-  @@index([sha256])
+  // FK join index for loading a proof's photos; the unique sha256 key
+  // already serves hash lookups, so the previous plain @@index([sha256])
+  // was redundant and has been dropped (see migration ...0008).
+  @@index([proofId])
+  // Covering index for the duplicate-photo check
+  // (WHERE sha256 IN (...) AND proofId != ?) â€” enables an index-only scan.
+  @@index([sha256, proofId])
   @@map("proof_photos")
 }
 
@@ -135,6 +173,9 @@ model Verification {
 
   proof Proof @relation(fields: [proofId], references: [id])
 
+  // FK join index: proofs are loaded with their verifications
+  // (GET /proofs/:id, review flows, verification worker).
+  @@index([proofId])
   @@map("verifications")
 }
 
@@ -155,6 +196,33 @@ model ValidatorVote {
   @@map("validator_votes")
 }
 
+// Transactional outbox / idempotency ledger for reward payouts. A row is
+// created in the SAME database transaction as the proof approval, so a crash
+// between "proof approved" and "payout enqueued" still leaves a recoverable
+// PENDING row that the payout sweeper will pick up after restart.
+//
+// The UNIQUE constraint on proofId guarantees at-most-once payout per proof.
+// The worker atomically claims a row (PENDING → PROCESSING via updateMany
+// with a WHERE guard) before submitting the Stellar payment, so two
+// concurrent workers can never both pass the claim.
+model RewardPayout {
+  id             String             @id @default(uuid())
+  proofId        String             @unique @map("proof_id")
+  requestId      String?            @map("request_id")
+  status         RewardPayoutStatus @default(PENDING)
+  txHash         String?            @map("tx_hash")
+  attempts       Int                @default(0)
+  lastError      String?            @map("last_error")
+  nextAttemptAt  DateTime           @default(now()) @map("next_attempt_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  proof Proof @relation(fields: [proofId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@map("reward_payouts")
+}
+
 model AuditLog {
   id         String   @id @default(uuid())
   userId     String?
@@ -163,8 +231,17 @@ model AuditLog {
   resourceId String?
   details    Json     @default("{}")
   ip         String?
+  outcome    String?  // "SUCCESS" | "FAILURE"
+  statusCode Int?
+  durationMs Int?
   createdAt  DateTime @default(now())
 
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([resource, createdAt(sort: Desc)])
+  // getAuditLogs with both filters: WHERE "userId" = ? AND resource = ?
+  // ORDER BY "createdAt" DESC LIMIT ? OFFSET ?
+  @@index([userId, resource, createdAt(sort: Desc)])
   @@map("AuditLog")
 }
 
@@ -181,7 +258,31 @@ model Notification {
   createdAt    DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outbox NotificationOutbox[]
 
   @@index([userId, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+// Transactional outbox for notification dispatch. A row is created in the
+// SAME database transaction as the event that triggers the notification
+// (e.g. a proof status change), so a crash before the BullMQ enqueue still
+// leaves a recoverable PENDING row that the outbox drainer can pick up and
+// enqueue after restart. Once max attempts are exceeded the row is moved to
+// DEAD_LETTER so failures are observable instead of silently dropped.
+model NotificationOutbox {
+  id             String                    @id @default(uuid())
+  notificationId String                    @map("notification_id")
+  requestId      String?                   @map("request_id")
+  status         NotificationOutboxStatus  @default(PENDING)
+  attempts       Int                       @default(0)
+  lastError      String?                   @map("last_error")
+  nextAttemptAt  DateTime                  @default(now()) @map("next_attempt_at")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@map("notification_outbox")
 }

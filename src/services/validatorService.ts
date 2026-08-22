@@ -3,8 +3,7 @@ import config from '../config/default.js';
 import logger from '../utils/logger.js';
 import { UserRole } from '@prisma/client';
 import { notifyProofStatus } from './notificationService.js';
-import { completeTaskIfFull } from '../models/task.js';
-import { enqueueRewardPayout } from '../workers/rewardWorker.js';
+import { claimCompletionSlot } from '../models/task.js';
 
 const AUTO_VERIFIER_ID = 'quorum';
 
@@ -83,6 +82,7 @@ export async function castVote(
   validatorId: string,
   verdict: 'approved' | 'rejected',
   notes?: string,
+  requestId?: string,
 ): Promise<QuorumOutcome> {
   const vote = await prisma.validatorVote.findUnique({
     where: { proofId_validatorId: { proofId, validatorId } },
@@ -104,7 +104,7 @@ export async function castVote(
     data: { reviewCount: { increment: 1 } },
   });
 
-  return resolveQuorum(proofId);
+  return resolveQuorum(proofId, requestId);
 }
 
 /**
@@ -113,7 +113,10 @@ export async function castVote(
  * triggering the reward), or escalates to manual review when all assigned
  * validators have voted without reaching agreement.
  */
-export async function resolveQuorum(proofId: string): Promise<QuorumOutcome> {
+export async function resolveQuorum(
+  proofId: string,
+  requestId?: string,
+): Promise<QuorumOutcome> {
   const proof = await prisma.proof.findUnique({
     where: { id: proofId },
     include: { validatorVotes: true },
@@ -136,7 +139,7 @@ export async function resolveQuorum(proofId: string): Promise<QuorumOutcome> {
   )?.[0] as 'approved' | 'rejected' | undefined;
 
   if (winner) {
-    return finalizeProof(proofId, winner, submitted);
+    return finalizeProof(proofId, winner, submitted, requestId);
   }
 
   const allVoted = submitted.length >= proof.validatorVotes.length;
@@ -160,52 +163,99 @@ async function finalizeProof(
   proofId: string,
   verdict: 'approved' | 'rejected',
   submitted: { validatorId: string; verdict: string | null }[],
+  requestId?: string,
 ): Promise<QuorumOutcome> {
-  const status = verdict === 'approved' ? 'APPROVED' : 'REJECTED';
-
+  const requestedStatus = verdict === 'approved' ? 'APPROVED' : 'REJECTED';
   const agreement = submitted.filter((v) => v.verdict === verdict);
   const disagreement = submitted.filter((v) => v.verdict !== verdict);
 
-  await prisma.$transaction([
-    prisma.proof.update({ where: { id: proofId }, data: { status } }),
-    prisma.verification.create({
+  const result = await prisma.$transaction(async (tx) => {
+    const proofRow = await tx.proof.findUnique({
+      where: { id: proofId },
+      select: { taskId: true, status: true },
+    });
+    if (!proofRow) return null;
+    if (proofRow.status === 'APPROVED' || proofRow.status === 'REJECTED') {
+      return null;
+    }
+
+    let finalStatus: 'APPROVED' | 'REJECTED' = requestedStatus;
+    let taskCompleted = false;
+    let notes = `quorum of ${agreement.length} validators`;
+
+    if (requestedStatus === 'APPROVED') {
+      const slot = await claimCompletionSlot(tx, proofRow.taskId);
+      if (!slot.claimed) {
+        finalStatus = 'REJECTED';
+        notes += ' [auto-rejected: task reached max completions]';
+      } else {
+        taskCompleted = slot.taskCompleted;
+      }
+    }
+
+    const { count } = await tx.proof.updateMany({
+      where: { id: proofId, status: { in: ['PENDING', 'VERIFYING'] } },
+      data: { status: finalStatus },
+    });
+    if (count === 0) return null;
+
+    await tx.verification.create({
       data: {
         proofId,
         verifierId: AUTO_VERIFIER_ID,
         verdict,
-        notes: `quorum of ${agreement.length} validators`,
+        notes,
       },
-    }),
-    ...agreement.map((v) =>
-      prisma.user.update({
+    });
+
+    for (const v of agreement) {
+      await tx.user.update({
         where: { id: v.validatorId },
         data: { validatorReputation: { increment: 1 } },
-      }),
-    ),
-    ...disagreement.map((v) =>
-      prisma.user.update({
+      });
+    }
+    for (const v of disagreement) {
+      await tx.user.update({
         where: { id: v.validatorId },
         data: { validatorReputation: { decrement: 1 } },
-      }),
-    ),
-  ]);
+      });
+    }
 
-  const proof = await prisma.proof.findUnique({
-    where: { id: proofId },
-    select: { userId: true, taskId: true },
-  });
-  if (proof) {
-    await notifyProofStatus(proof.userId, proofId, status);
-
-    if (status === 'APPROVED') {
-      const completed = await completeTaskIfFull(proof.taskId);
-      if (completed) {
-        logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
+    const proofRecord = await tx.proof.findUnique({
+      where: { id: proofId },
+      select: { userId: true, taskId: true },
+    });
+    if (proofRecord) {
+      if (requestId) {
+        await notifyProofStatus(proofRecord.userId, proofId, finalStatus, tx, requestId);
+      } else {
+        await notifyProofStatus(proofRecord.userId, proofId, finalStatus, tx);
       }
-      await enqueueRewardPayout(proofId);
+    }
+
+    if (finalStatus === 'APPROVED') {
+      await tx.rewardPayout.create({
+        data: {
+          proofId,
+          ...(requestId ? { requestId } : {}),
+        },
+      });
+    }
+
+    return { proofRecord, finalStatus, taskCompleted };
+  });
+
+  if (result?.proofRecord && result.finalStatus === 'APPROVED') {
+    if (result.taskCompleted) {
+      logger.info('Task reached capacity and was completed', {
+        taskId: result.proofRecord.taskId,
+      });
     }
   }
 
-  logger.info('Quorum reached, proof finalized', { proofId, status });
-  return { finalized: true, status };
+  logger.info('Quorum reached, proof finalized', {
+    proofId,
+    status: result?.finalStatus ?? requestedStatus,
+  });
+  return { finalized: true, status: result?.finalStatus ?? requestedStatus };
 }

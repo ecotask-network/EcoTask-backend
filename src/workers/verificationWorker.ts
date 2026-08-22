@@ -1,30 +1,38 @@
 import { Worker, Queue } from 'bullmq';
+import type { ConnectionOptions } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
 import { assignValidators } from '../services/validatorService';
-import { completeTaskIfFull } from '../models/task';
-import { enqueueRewardPayout } from './rewardWorker';
-import config from '../config/default';
-import IORedis from 'ioredis';
+import { claimCompletionSlot } from '../models/task';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
+import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
+// BullMQ bundles its own ioredis, so its `ConnectionOptions` is a structurally
+// distinct type from our top-level ioredis `Redis`. The cast is purely
+// type-level: both are the same ioredis client at runtime.
+const connection = redisConnectionManager.getClient() as ConnectionOptions;
 
 const queueName = QUEUE_NAMES.proofVerification;
 const retentionOptions = getQueueRetentionOptions(queueName);
 
-export const verificationQueue = new Queue(queueName, {
+interface VerificationJobData {
+  proofId: string;
+  requestId?: string;
+}
+
+export const verificationQueue = new Queue<VerificationJobData>(queueName, {
   connection,
   defaultJobOptions: retentionOptions,
 });
 
-export async function enqueueVerification(proofId: string) {
+export async function enqueueVerification(proofId: string, requestId?: string) {
+  const resolvedRequestId = requestId ?? getRequestId();
   await verificationQueue.add(
     'verify',
-    { proofId },
+    { proofId, ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}) },
     {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
@@ -33,74 +41,167 @@ export async function enqueueVerification(proofId: string) {
   );
 }
 
-const worker = new Worker(
+const worker = new Worker<VerificationJobData>(
   queueName,
   async (job) => {
-    const { proofId } = job.data;
-    logger.info('Processing proof verification', { proofId });
+    const { proofId, requestId } = job.data;
+    const requestMeta = requestId ? { requestId } : {};
 
-    const proof = await prisma.proof.findUnique({
-      where: { id: proofId },
-      select: { userId: true, taskId: true, status: true },
-    });
-    if (!proof) throw new Error('Proof not found');
+    return runWithRequestContext(requestId, async () => {
+      logger.info('Processing proof verification', { proofId, ...requestMeta });
 
-    if (proof.status !== 'PENDING') {
-      logger.info('Skipping proof already processed', { proofId, status: proof.status });
-      return;
-    }
-
-    await prisma.proof.update({ where: { id: proofId }, data: { status: 'VERIFYING' } });
-
-    const result = await autoVerify(proofId);
-
-    if (result.verdict === 'approved') {
-      await prisma.proof.update({ where: { id: proofId }, data: { status: 'APPROVED' } });
-      await notifyProofStatus(proof.userId, proofId, 'APPROVED');
-
-      const completed = await completeTaskIfFull(proof.taskId);
-      if (completed) {
-        logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
+      const { count: claimed } = await prisma.proof.updateMany({
+        where: { id: proofId, status: 'PENDING' },
+        data: { status: 'VERIFYING' },
+      });
+      if (claimed === 0) {
+        const existing = await prisma.proof.findUnique({
+          where: { id: proofId },
+          select: { status: true },
+        });
+        logger.info('Skipping proof already processed', {
+          proofId,
+          status: existing?.status ?? 'UNKNOWN',
+          ...requestMeta,
+        });
+        return;
       }
 
-      await enqueueRewardPayout(proofId);
-    } else if (result.verdict === 'rejected') {
-      await prisma.proof.update({ where: { id: proofId }, data: { status: 'REJECTED' } });
-      await notifyProofStatus(proof.userId, proofId, 'REJECTED');
-    } else {
-      const assigned = await assignValidators(proofId);
-      if (assigned > 0) {
-        logger.info('Proof assigned to community validators', { proofId, assigned });
+      const proof = await prisma.proof.findUnique({
+        where: { id: proofId },
+        select: { userId: true, taskId: true },
+      });
+      if (!proof) throw new Error('Proof not found');
+
+      const result = await autoVerify(proofId);
+
+      if (result.verdict === 'approved') {
+        const { finalStatus, taskCompleted } = await prisma.$transaction(async (tx) => {
+          let finalStatus: 'APPROVED' | 'REJECTED' = 'APPROVED';
+          let taskCompleted = false;
+          let notes = result.notes || `confidence: ${result.confidence}`;
+
+          const slot = await claimCompletionSlot(tx, proof.taskId);
+          if (!slot.claimed) {
+            finalStatus = 'REJECTED';
+            notes += ' [auto-rejected: task reached max completions]';
+          } else {
+            taskCompleted = slot.taskCompleted;
+          }
+
+          await tx.proof.update({
+            where: { id: proofId },
+            data: { status: finalStatus },
+          });
+          await tx.verification.create({
+            data: {
+              proofId,
+              verifierId: 'auto-verifier',
+              verdict: result.verdict,
+              notes,
+            },
+          });
+          if (requestId) {
+            await notifyProofStatus(proof.userId, proofId, finalStatus, tx, requestId);
+          } else {
+            await notifyProofStatus(proof.userId, proofId, finalStatus, tx);
+          }
+
+          if (finalStatus === 'APPROVED') {
+            await tx.rewardPayout.create({
+              data: {
+                proofId,
+                ...(requestId ? { requestId } : {}),
+              },
+            });
+          }
+
+          return { finalStatus, taskCompleted };
+        });
+
+        if (finalStatus === 'APPROVED') {
+          if (taskCompleted) {
+            logger.info('Task reached capacity and was completed', {
+              taskId: proof.taskId,
+              ...requestMeta,
+            });
+          }
+        } else {
+          logger.info('Auto-approved proof rejected: task at capacity', {
+            proofId,
+            taskId: proof.taskId,
+            ...requestMeta,
+          });
+        }
+      } else if (result.verdict === 'rejected') {
+        await prisma.$transaction(async (tx) => {
+          await tx.proof.update({
+            where: { id: proofId },
+            data: { status: 'REJECTED' },
+          });
+          await tx.verification.create({
+            data: {
+              proofId,
+              verifierId: 'auto-verifier',
+              verdict: result.verdict,
+              notes: result.notes || `confidence: ${result.confidence}`,
+            },
+          });
+          if (requestId) {
+            await notifyProofStatus(proof.userId, proofId, 'REJECTED', tx, requestId);
+          } else {
+            await notifyProofStatus(proof.userId, proofId, 'REJECTED', tx);
+          }
+        });
       } else {
-        logger.info('Proof inconclusive — no validators available, needs manual review', {
-          proofId,
+        const assigned = await assignValidators(proofId);
+        if (assigned > 0) {
+          logger.info('Proof assigned to community validators', {
+            proofId,
+            assigned,
+            ...requestMeta,
+          });
+        } else {
+          logger.info(
+            'Proof inconclusive — no validators available, needs manual review',
+            {
+              proofId,
+              ...requestMeta,
+            },
+          );
+        }
+
+        await prisma.verification.create({
+          data: {
+            proofId,
+            verifierId: 'auto-verifier',
+            verdict: result.verdict,
+            notes: result.notes || `confidence: ${result.confidence}`,
+          },
         });
       }
-    }
-
-    await prisma.verification.create({
-      data: {
-        proofId,
-        verifierId: 'auto-verifier',
-        verdict: result.verdict,
-        notes: result.notes || `confidence: ${result.confidence}`,
-      },
     });
   },
   { connection },
 );
 
 worker.on('completed', (job) =>
-  logger.info('Verification job completed', { jobId: job.id }),
+  logger.info('Verification job completed', {
+    jobId: job.id,
+    ...(job.data.requestId ? { requestId: job.data.requestId } : {}),
+  }),
 );
 worker.on('failed', (job, err) =>
-  logger.error('Verification job failed', { jobId: job?.id, err }),
+  logger.error('Verification job failed', {
+    jobId: job?.id,
+    ...(job?.data?.requestId ? { requestId: job.data.requestId } : {}),
+    err,
+  }),
 );
 
 export async function shutdownVerificationWorker(): Promise<void> {
   await worker.close();
   await verificationQueue.close();
-  await connection.quit();
   logger.info('Verification worker shut down');
 }
 

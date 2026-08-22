@@ -1,5 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
+import ExifReader from 'exifreader';
+import { imageSize } from 'image-size';
 import {
   hashFile,
   extractPhotoMetadata,
@@ -15,9 +18,9 @@ const FIXTURE = path.join(__dirname, '../fixtures/test-proof.jpg');
 const FORGED_EXIF = path.join(__dirname, '../fixtures/forged-exif.jpg');
 
 describe('PhotoService', () => {
-  it('hashes a file to a stable sha256 hex digest', () => {
-    const first = hashFile(FIXTURE);
-    const second = hashFile(FIXTURE);
+  it('hashes a file to a stable sha256 hex digest', async () => {
+    const first = await hashFile(FIXTURE);
+    const second = await hashFile(FIXTURE);
     expect(first).toMatch(/^[a-f0-9]{64}$/);
     expect(first).toBe(second);
   });
@@ -75,6 +78,64 @@ describe('PhotoService', () => {
     it('fails hasMinimumResolution because real dimensions are 10×10', async () => {
       const metadata = await extractPhotoMetadata(FORGED_EXIF);
       expect(hasMinimumResolution(metadata)).toBe(false);
+    });
+  });
+
+  // ── Identical-output regression: async streaming vs. direct sync decode ────
+  // hashFile/extractPhotoMetadata were refactored from `fs.readFileSync` +
+  // synchronous hashing/decoding to streamed/async I/O (see photoService.ts).
+  // These tests assert the new async code paths produce byte-identical
+  // results to a direct, independently-computed synchronous reference
+  // (the same primitives the old implementation used), so the refactor is
+  // a pure performance change with no behavioral drift.
+  describe('async implementation matches a direct synchronous reference decode', () => {
+    it('hashFile matches a plain sha256(readFileSync(...)) of test-proof.jpg', async () => {
+      const referenceHash = createHash('sha256')
+        .update(fs.readFileSync(FIXTURE))
+        .digest('hex');
+      const result = await hashFile(FIXTURE);
+      expect(result).toBe(referenceHash);
+    });
+
+    it('hashFile matches a plain sha256(readFileSync(...)) of forged-exif.jpg', async () => {
+      const referenceHash = createHash('sha256')
+        .update(fs.readFileSync(FORGED_EXIF))
+        .digest('hex');
+      const result = await hashFile(FORGED_EXIF);
+      expect(result).toBe(referenceHash);
+    });
+
+    it('extractPhotoMetadata matches direct image-size + exifreader decode for test-proof.jpg', async () => {
+      const buffer = fs.readFileSync(FIXTURE);
+      const referenceDimensions = imageSize(buffer);
+      const referenceTags = ExifReader.load(buffer);
+
+      const metadata = await extractPhotoMetadata(FIXTURE);
+
+      expect(metadata.width).toBe(referenceDimensions.width ?? null);
+      expect(metadata.height).toBe(referenceDimensions.height ?? null);
+
+      if (referenceTags.GPSLatitude && referenceTags.GPSLongitude) {
+        expect(metadata.gpsLat).toBeCloseTo(
+          parseFloat(referenceTags.GPSLatitude.description as string),
+        );
+        expect(metadata.gpsLng).toBeCloseTo(
+          parseFloat(referenceTags.GPSLongitude.description as string),
+        );
+      } else {
+        expect(metadata.gpsLat).toBeNull();
+        expect(metadata.gpsLng).toBeNull();
+      }
+    });
+
+    it('extractPhotoMetadata matches direct image-size decode for forged-exif.jpg (real 10×10, not forged 4000×3000)', async () => {
+      const buffer = fs.readFileSync(FORGED_EXIF);
+      const referenceDimensions = imageSize(buffer);
+
+      const metadata = await extractPhotoMetadata(FORGED_EXIF);
+
+      expect(metadata.width).toBe(referenceDimensions.width ?? null);
+      expect(metadata.height).toBe(referenceDimensions.height ?? null);
     });
   });
 

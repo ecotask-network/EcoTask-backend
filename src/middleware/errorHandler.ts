@@ -9,7 +9,12 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ) {
-  logger.error('Unhandled error', { err, path: req.path, method: req.method });
+  logger.error('Unhandled error', {
+    err,
+    path: req.path,
+    method: req.method,
+    requestId: req.requestId,
+  });
 
   if (err instanceof ZodError) {
     return res.status(400).json({

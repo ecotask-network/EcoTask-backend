@@ -2,6 +2,10 @@ import request from 'supertest';
 import app from '../../src/app';
 import jwt from 'jsonwebtoken';
 
+jest.mock('../../src/services/auditService', () => ({
+  logAudit: jest.fn(),
+}));
+
 jest.mock('../../src/workers/verificationWorker', () => ({
   enqueueVerification: jest.fn(),
 }));
@@ -222,6 +226,7 @@ describe('Validator Routes', () => {
         'v-id',
         'approved',
         'matches task location',
+        res.headers['x-request-id'],
       );
     });
 

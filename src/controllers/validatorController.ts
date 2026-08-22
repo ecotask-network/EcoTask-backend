@@ -79,6 +79,7 @@ export async function submitReview(req: Request, res: Response) {
       req.user!.userId,
       parsed.data.verdict,
       parsed.data.notes,
+      req.requestId,
     );
     return res.json({ outcome });
   } catch (err) {

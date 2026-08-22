@@ -1,33 +1,37 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 
 const router = Router();
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms);
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
 
 router.get('/', async (_req: Request, res: Response) => {
   const checks: Record<string, string> = {};
 
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await withTimeout(prisma.$queryRaw`SELECT 1`, 1500);
     checks.database = 'ok';
-  } catch {
-    checks.database = 'error';
+  } catch (err) {
+    checks.database =
+      err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error';
   }
 
-  try {
-    const mod = await import('ioredis');
-    const Redis = (mod.default ?? mod) as unknown as new (...args: unknown[]) => {
-      connect(): Promise<void>;
-      ping(): Promise<string>;
-      quit(): Promise<void>;
-    };
-    const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-    await redis.connect();
-    await redis.ping();
-    await redis.quit();
-    checks.redis = 'ok';
-  } catch {
-    checks.redis = 'error';
-  }
+  const redis = await redisConnectionManager.healthCheck(1500);
+  checks.redis = redis.healthy ? 'ok' : redis.status;
 
   const allOk = Object.values(checks).every((v) => v === 'ok');
   const status = allOk ? 200 : 503;

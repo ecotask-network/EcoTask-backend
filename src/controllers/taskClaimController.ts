@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
-import { ClaimStatus } from '@prisma/client';
+import { ClaimStatus, TaskStatus } from '@prisma/client';
 
 const CLAIM_DURATION_MS = 24 * 60 * 60 * 1000;
 
@@ -13,7 +13,7 @@ export async function claimTask(req: Request, res: Response) {
     if (!task) {
       return { status: 404 as const, body: { error: 'task not found' } };
     }
-    if (task.status !== 'ACTIVE') {
+    if (task.status !== TaskStatus.ACTIVE) {
       return { status: 400 as const, body: { error: 'task is not active' } };
     }
 
