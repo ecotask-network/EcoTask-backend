@@ -107,8 +107,17 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
   // forge EXIF/GPS metadata to satisfy the auto-approval gate. This is the
   // minimum proof-of-capture invariant required for an automatic approval.
   const hasServerProofSignal = proof.photos.some((photo) => Boolean(photo.sha256));
+  const hasCorruptPhotos = proof.photos.some(isCorruptPhoto);
 
-  if (score >= 0.7 && hasPhotos && hasServerProofSignal) {
+  if (hasPhotos && hasCorruptPhotos) {
+    return {
+      verdict: 'inconclusive',
+      confidence: score,
+      notes: 'corrupt_photos_detected',
+    };
+  }
+
+  if (score >= 0.7 && hasPhotos && !hasCorruptPhotos && hasServerProofSignal) {
     return { verdict: 'approved', confidence: score };
   }
   if (score >= 0.7 && hasPhotos && !hasServerProofSignal) {
@@ -118,14 +127,6 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
       notes: 'missing_server_proof_signal',
     };
   }
-  // has no photos attached or contains corrupt/unreadable photos, no matter how
-  // high the rest of the score is. A photo-less or corrupt-photo proof can still
-  // land as inconclusive (routed to community validators) if the remaining
-  // signals are otherwise plausible, but never as an automatic approval.
-  const hasCorruptPhotos = proof.photos.some(isCorruptPhoto);
-  const hasValidPhotos = proof.photos.length > 0 && !hasCorruptPhotos;
-
-  if (score >= 0.7 && hasValidPhotos) return { verdict: 'approved', confidence: score };
   if (score >= 0.4) return { verdict: 'inconclusive', confidence: score };
   return {
     verdict: 'rejected',

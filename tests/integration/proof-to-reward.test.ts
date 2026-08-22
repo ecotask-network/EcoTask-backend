@@ -13,6 +13,7 @@ jest.mock('../../src/utils/prisma', () => ({
     },
     proofPhoto: {
       create: jest.fn(),
+      count: jest.fn(),
     },
   },
 }));
@@ -22,11 +23,13 @@ import prisma from '../../src/utils/prisma';
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock; update: jest.Mock };
   verification: { create: jest.Mock };
+  proofPhoto: { count: jest.Mock };
 };
 
 describe('Proof-to-Reward Integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.proofPhoto.count.mockResolvedValue(0);
   });
 
   it('approves valid proof and generates mock reward tx', async () => {
@@ -37,7 +40,16 @@ describe('Proof-to-Reward Integration', () => {
       status: 'PENDING',
       lat: -1.2921,
       lng: 36.8219,
-      photos: [{ id: 'photo-1', cid: 'cid-1', width: 1920, height: 1080 }],
+      photos: [
+        {
+          id: 'photo-1',
+          cid: 'cid-1',
+          sha256: 'valid-proof-hash',
+          width: 1920,
+          height: 1080,
+          capturedAt: new Date(),
+        },
+      ],
       user: { wallet: 'GC...USER...' },
       task: {
         id: 'task-1',
