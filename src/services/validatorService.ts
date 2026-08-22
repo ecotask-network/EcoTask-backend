@@ -148,6 +148,9 @@ export async function resolveQuorum(
         proofId,
         verifierId: AUTO_VERIFIER_ID,
         verdict: 'inconclusive',
+        // No Proof.status change occurs on escalation; effectiveVerdict
+        // mirrors the intent.
+        effectiveVerdict: 'inconclusive',
         notes: 'no quorum reached; escalated to admin review',
       },
     });
@@ -203,6 +206,10 @@ async function finalizeProof(
         proofId,
         verifierId: AUTO_VERIFIER_ID,
         verdict,
+        // effectiveVerdict always matches the resulting Proof.status
+        // (lower-case). When a capacity check overrides an 'approved'
+        // quorum verdict the two fields intentionally differ.
+        effectiveVerdict: finalStatus.toLowerCase(),
         notes,
       },
     });

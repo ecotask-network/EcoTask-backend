@@ -98,6 +98,10 @@ const worker = new Worker<VerificationJobData>(
               proofId,
               verifierId: 'auto-verifier',
               verdict: result.verdict,
+              // effectiveVerdict always matches the resulting Proof.status
+              // (lower-case). When a capacity check overrides an 'approved'
+              // verdict the two fields intentionally differ.
+              effectiveVerdict: finalStatus.toLowerCase(),
               notes,
             },
           });
@@ -144,6 +148,7 @@ const worker = new Worker<VerificationJobData>(
               proofId,
               verifierId: 'auto-verifier',
               verdict: result.verdict,
+              effectiveVerdict: 'rejected',
               notes: result.notes || `confidence: ${result.confidence}`,
             },
           });
@@ -176,6 +181,9 @@ const worker = new Worker<VerificationJobData>(
             proofId,
             verifierId: 'auto-verifier',
             verdict: result.verdict,
+            // Inconclusive proofs are not yet finalized; effectiveVerdict
+            // mirrors the intent since no Proof.status change occurs here.
+            effectiveVerdict: result.verdict,
             notes: result.notes || `confidence: ${result.confidence}`,
           },
         });

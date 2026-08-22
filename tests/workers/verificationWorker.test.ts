@@ -203,6 +203,15 @@ describe('Verification Worker', () => {
       proofId: 'proof-1',
       requestId: 'request-1',
     });
+    // effectiveVerdict must match the actual Proof.status
+    expect(mockPrisma.verification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          verdict: 'approved',
+          effectiveVerdict: 'approved',
+        }),
+      }),
+    );
   });
 
   it('rejects invalid proofs inside the same transaction as the notification', async () => {
@@ -232,6 +241,15 @@ describe('Verification Worker', () => {
       mockPrisma,
     );
     expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
+    // effectiveVerdict must match the actual Proof.status
+    expect(mockPrisma.verification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          verdict: 'rejected',
+          effectiveVerdict: 'rejected',
+        }),
+      }),
+    );
   });
 
   it('assigns inconclusive proofs to community validators', async () => {
