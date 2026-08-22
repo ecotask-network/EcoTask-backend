@@ -71,6 +71,8 @@ describe('VerificationService', () => {
           sha256: 'valid-proof-hash',
           width: 4032,
           height: 3024,
+          width: 1920,
+          height: 1080,
           capturedAt: new Date(),
         },
       ],
@@ -397,6 +399,99 @@ describe('VerificationService', () => {
       const result = await autoVerify('proof-matrix');
 
       expect(result.verdict).not.toBe('approved');
+    });
+
+    // ── Corrupt photo gate ──────────────────────────────────────────────────
+    it('never auto-approves a proof with corrupt photos (width/height null) even with favorable GPS, unique hash, and no expiry', async () => {
+      // Score: GPS (0.40) + photos_present (0.15) + timestamp_not_forged (0.05) + not_duplicate (0.10) + no_expiry (0.20) = 0.90
+      // Because the photo is corrupt, it must NEVER auto-approve.
+      mockPrisma.proof.findUnique.mockResolvedValue({
+        id: 'proof-corrupt-photo',
+        lat: -1.2921,
+        lng: 36.8219,
+        createdAt: new Date(),
+        photos: [
+          {
+            id: 'photo-corrupt',
+            cid: 'cid-corrupt',
+            filename: 'garbage.jpg',
+            sha256: 'unique-corrupt-hash',
+            width: null,
+            height: null,
+            capturedAt: null,
+          },
+        ],
+        task: makeTask(),
+      });
+
+      const result = await autoVerify('proof-corrupt-photo');
+
+      expect(result.verdict).not.toBe('approved');
+      expect(result.verdict).toBe('inconclusive');
+      expect(result.confidence).toBeCloseTo(0.9, 10);
+    });
+
+    it('blocks auto-approval when proof contains mixed valid and corrupt photos', async () => {
+      mockPrisma.proof.findUnique.mockResolvedValue({
+        id: 'proof-mixed-photos',
+        lat: -1.2921,
+        lng: 36.8219,
+        createdAt: new Date(),
+        photos: [
+          {
+            id: 'photo-valid',
+            cid: 'cid-1',
+            filename: 'valid.jpg',
+            sha256: 'valid-hash',
+            width: 1920,
+            height: 1080,
+            capturedAt: new Date(),
+          },
+          {
+            id: 'photo-corrupt',
+            cid: 'cid-2',
+            filename: 'corrupt.jpg',
+            sha256: 'corrupt-hash',
+            width: null,
+            height: null,
+            capturedAt: null,
+          },
+        ],
+        task: makeTask(),
+      });
+
+      const result = await autoVerify('proof-mixed-photos');
+
+      expect(result.verdict).not.toBe('approved');
+      expect(result.verdict).toBe('inconclusive');
+    });
+
+    it('approves a valid photo without EXIF metadata when GPS and dimensions pass', async () => {
+      // Photo without EXIF: width/height are valid (e.g. 1920x1080), capturedAt is null.
+      // Score: GPS (0.40) + photos_present (0.15) + photo_quality (0.10) + timestamp_not_forged (0.05) + not_duplicate (0.10) + no_expiry (0.20) = 1.00
+      mockPrisma.proof.findUnique.mockResolvedValue({
+        id: 'proof-valid-no-exif',
+        lat: -1.2921,
+        lng: 36.8219,
+        createdAt: new Date(),
+        photos: [
+          {
+            id: 'photo-no-exif',
+            cid: 'cid-1',
+            filename: 'screenshot.png',
+            sha256: 'clean-png-hash',
+            width: 1920,
+            height: 1080,
+            capturedAt: null,
+          },
+        ],
+        task: makeTask(),
+      });
+
+      const result = await autoVerify('proof-valid-no-exif');
+
+      expect(result.verdict).toBe('approved');
+      expect(result.confidence).toBe(1.0);
     });
   });
 });

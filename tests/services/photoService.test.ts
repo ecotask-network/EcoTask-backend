@@ -9,6 +9,7 @@ import {
   hasMinimumResolution,
   isRecentlyCaptured,
   hasFutureCaptureSkew,
+  isCorruptPhoto,
   MIN_PHOTO_WIDTH,
   MAX_PHOTO_AGE_MS,
   MAX_CAPTURE_SKEW_MS,
@@ -32,9 +33,10 @@ describe('PhotoService', () => {
     expect(metadata).toHaveProperty('capturedAt');
     expect(metadata).toHaveProperty('gpsLat');
     expect(metadata).toHaveProperty('gpsLng');
+    expect(metadata.isCorrupt).toBe(false);
   });
 
-  it('returns null metadata for missing files', async () => {
+  it('returns isCorrupt: true and null metadata for missing files', async () => {
     const metadata = await extractPhotoMetadata('/tmp/does-not-exist.jpg');
     expect(metadata).toEqual({
       width: null,
@@ -42,7 +44,58 @@ describe('PhotoService', () => {
       capturedAt: null,
       gpsLat: null,
       gpsLng: null,
+      isCorrupt: true,
     });
+    expect(isCorruptPhoto(metadata)).toBe(true);
+  });
+
+  it('identifies corrupt / non-image files as isCorrupt: true', async () => {
+    const tmpFile = path.join(path.dirname(FIXTURE), 'temp-corrupt.bin');
+    fs.writeFileSync(tmpFile, Buffer.from('this is not an image file'));
+    try {
+      const metadata = await extractPhotoMetadata(tmpFile);
+      expect(metadata).toEqual({
+        width: null,
+        height: null,
+        capturedAt: null,
+        gpsLat: null,
+        gpsLng: null,
+        isCorrupt: true,
+      });
+      expect(isCorruptPhoto(metadata)).toBe(true);
+    } finally {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    }
+  });
+
+  it('distinguishes legitimate image without EXIF from corrupt file', async () => {
+    // 1x1 minimal PNG without any EXIF
+    const minimalPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const tmpFile = path.join(path.dirname(FIXTURE), 'temp-no-exif.png');
+    fs.writeFileSync(tmpFile, minimalPng);
+    try {
+      const metadata = await extractPhotoMetadata(tmpFile);
+      expect(metadata.isCorrupt).toBe(false);
+      expect(metadata.width).toBe(1);
+      expect(metadata.height).toBe(1);
+      expect(metadata.capturedAt).toBeNull();
+      expect(metadata.gpsLat).toBeNull();
+      expect(metadata.gpsLng).toBeNull();
+      expect(isCorruptPhoto(metadata)).toBe(false);
+    } finally {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    }
+  });
+
+  it('isCorruptPhoto helper returns true for null dimensions or isCorrupt flag', () => {
+    expect(isCorruptPhoto({ width: null, height: null })).toBe(true);
+    expect(isCorruptPhoto({ width: 1000, height: null })).toBe(true);
+    expect(isCorruptPhoto({ width: null, height: 1000 })).toBe(true);
+    expect(isCorruptPhoto({ isCorrupt: true, width: 1000, height: 1000 })).toBe(true);
+    expect(isCorruptPhoto({ isCorrupt: false, width: 1000, height: 1000 })).toBe(false);
   });
 
   it('flags photos below the minimum resolution', () => {
