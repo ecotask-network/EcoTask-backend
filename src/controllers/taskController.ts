@@ -6,6 +6,7 @@ import {
   listTasksQuerySchema,
 } from '../utils/validation.js';
 import { InvalidCursorError } from '../utils/cursor.js';
+import { formatRewardAmount } from '../utils/reward.js';
 
 export async function listTasks(req: Request, res: Response) {
   const parsed = listTasksQuerySchema.safeParse(req.query);
@@ -112,7 +113,7 @@ function formatTaskForApi(
   return {
     ...rest,
     ...(rewardAmountMicros != null
-      ? { rewardAmount: Number(rewardAmountMicros) / 10000000 }
+      ? { rewardAmount: formatRewardAmount(rewardAmountMicros) }
       : {}),
   };
 }

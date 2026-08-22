@@ -48,7 +48,7 @@ describe('Analytics Routes', () => {
         users: 25,
         proofs: 100,
         approvedProofs: 2,
-        totalRewardPaid: 80,
+        totalRewardPaid: '80',
       });
     });
   });
@@ -64,8 +64,8 @@ describe('Analytics Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.days).toBe(7);
       expect(res.body.points).toEqual([
-        { day: '2026-08-01', approvedProofs: 2, totalReward: 100 },
-        { day: '2026-08-02', approvedProofs: 1, totalReward: 50 },
+        { day: '2026-08-01', approvedProofs: 2, totalReward: '100' },
+        { day: '2026-08-02', approvedProofs: 1, totalReward: '50' },
       ]);
     });
 

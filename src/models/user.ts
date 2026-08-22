@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+import { formatRewardAmount } from '../utils/reward.js';
 
 export async function findOrCreateUser(wallet: string) {
   let user = await prisma.user.findUnique({ where: { wallet } });
@@ -59,22 +60,22 @@ export async function getUserImpact(id: string) {
   `;
 
   // Build response object with totals and byType breakdown
-  const byType: Record<string, { count: number; reward: number }> = {};
+  const byType: Record<string, { count: number; reward: string }> = {};
   let totalApproved = 0;
-  let totalReward = 0;
+  let totalRewardMicros = 0n;
 
   aggResult.forEach((row) => {
     const count = Number(row.proof_count);
-    const reward = Number(row.total_reward_micros ?? 0n) / 10000000;
+    const rewardMicros = row.total_reward_micros ?? 0n;
 
-    byType[row.task_type] = { count, reward };
+    byType[row.task_type] = { count, reward: formatRewardAmount(rewardMicros) };
     totalApproved += count;
-    totalReward += reward;
+    totalRewardMicros += rewardMicros;
   });
 
   return {
     totalApproved,
-    totalReward,
+    totalReward: formatRewardAmount(totalRewardMicros),
     byType,
   };
 }

@@ -1,40 +1,21 @@
-import rateLimit from 'express-rate-limit';
+
 import { Request, Response, NextFunction } from 'express';
 import { rateLimiter } from '../services/rateLimitService.js';
 import config from '../config/default.js';
 import logger from '../utils/logger.js';
-
-export const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later' },
-});
-
-export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: { error: 'Too many login attempts' },
-});
-
-export const proofLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 50,
-  message: { error: 'Too many proof submissions' },
-});
 
 export interface PerUserLimitOptions {
   windowMs: number;
   max: number;
   scope: string;
   keyFn?: (req: Request) => string;
+  errorMessage?: string;
+  failClosed?: boolean;
 }
 
 /**
  * Per-user (or per-IP for anonymous callers) fixed-window limiter backed by
- * Redis. Fails open if Redis is unreachable so an infra hiccup never blocks
- * legitimate traffic.
+ * Redis. Can fail open or closed if Redis is unreachable.
  */
 export function perUserLimiter(options: PerUserLimitOptions) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -53,16 +34,42 @@ export function perUserLimiter(options: PerUserLimitOptions) {
         res.setHeader('Retry-After', String(result.retryAfterSeconds));
         return res
           .status(429)
-          .json({ error: 'Too many requests, please try again later' });
+          .json({ error: options.errorMessage || 'Too many requests, please try again later' });
       }
 
       next();
     } catch (err) {
+      if (options.failClosed) {
+        logger.error('Rate limiter unavailable, failing closed', { err });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
       logger.warn('Per-user rate limiter unavailable, allowing request', { err });
       next();
     }
   };
 }
+
+export const apiLimiter = perUserLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  scope: 'api',
+});
+
+export const authLimiter = perUserLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  scope: 'auth',
+  failClosed: true,
+  errorMessage: 'Too many login attempts',
+});
+
+export const proofLimiter = perUserLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 50,
+  scope: 'proof',
+  failClosed: true,
+  errorMessage: 'Too many proof submissions',
+});
 
 export const proofSubmissionLimiter = perUserLimiter({
   windowMs: config.rateLimit.proofWindowMs,
