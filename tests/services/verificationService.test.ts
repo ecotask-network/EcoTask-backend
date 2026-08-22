@@ -68,6 +68,9 @@ describe('VerificationService', () => {
           id: 'photo-1',
           cid: 'cid-1',
           filename: 'test.jpg',
+          sha256: 'valid-proof-hash',
+          width: 4032,
+          height: 3024,
           width: 1920,
           height: 1080,
           capturedAt: new Date(),
@@ -291,6 +294,34 @@ describe('VerificationService', () => {
     // Score: 0 + 0.15 + 0.10 + 0 + 0 + 0.10 + 0.20 = 0.55 → inconclusive
     expect(result.verdict).toBe('inconclusive');
     expect(result.confidence).toBe(0.55);
+  });
+
+  it('does not auto-approve EXIF/GPS-only spoofing without a server-generated photo signal', async () => {
+    const proofCreatedAt = new Date();
+    const recentCapture = new Date(proofCreatedAt.getTime() - 60 * 1000);
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      id: 'proof-redteam',
+      lat: -1.2921,
+      lng: 36.8219,
+      createdAt: proofCreatedAt,
+      photos: [
+        {
+          id: 'photo-1',
+          cid: 'cid-1',
+          filename: 'spoofed.jpg',
+          sha256: null,
+          width: 4032,
+          height: 3024,
+          capturedAt: recentCapture,
+        },
+      ],
+      task: makeTask(),
+    });
+
+    const result = await autoVerify('proof-redteam');
+
+    expect(result.verdict).not.toBe('approved');
+    expect(result.notes).toContain('missing_server_proof_signal');
   });
 
   // ── Photo gate: no combination of GPS/duplicate/expiry checks may
