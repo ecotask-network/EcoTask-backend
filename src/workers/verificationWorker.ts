@@ -1,9 +1,12 @@
 import { Worker, Queue } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
+import { finalizeProofStatus } from '../services/proofFinalizationService.js';
 import { notifyProofStatus } from '../services/notificationService';
 import { assignValidators } from '../services/validatorService';
 import { claimCompletionSlot } from '../models/task';
+import config from '../config/default.js';
+import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
 import { redisConnectionManager } from '../utils/redisConnectionManager.js';

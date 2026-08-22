@@ -211,7 +211,7 @@ async function finalizeProof(
 
   logger.info('Quorum reached, proof finalized', {
     proofId,
-    status: result?.finalStatus ?? requestedStatus,
+    status: result?.finalStatus ?? verdictStr,
   });
-  return { finalized: true, status: result?.finalStatus ?? requestedStatus };
+  return { finalized: true, status: result?.finalStatus ?? verdictStr };
 }
