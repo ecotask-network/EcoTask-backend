@@ -106,7 +106,11 @@ beforeEach(() => {
     // Interactive-transaction form used by submitProof: the callback receives
     // the mock client itself, so tx.task/tx.taskClaim/... hit the same mocks.
     if (typeof arg === 'function') {
-      return (arg as (tx: unknown) => unknown)(mockPrisma);
+      const txWithQueryRaw = {
+        ...mockPrisma,
+        $queryRaw: jest.fn().mockResolvedValue([{ status: 'PENDING', task_id: 'task-1', user_id: 'user-1' }]),
+      };
+      return (arg as (tx: unknown) => unknown)(txWithQueryRaw);
     }
     const ops = arg as Promise<unknown>[];
     for (const op of ops) await op;

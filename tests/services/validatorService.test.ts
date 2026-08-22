@@ -75,7 +75,13 @@ describe('ValidatorService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPrisma.$transaction.mockImplementation(
-      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+        const txWithQueryRaw = {
+          ...mockPrisma,
+          $queryRaw: jest.fn().mockResolvedValue([{ status: 'VERIFYING', task_id: 'task-1', user_id: 'user-1' }]),
+        } as unknown as typeof mockPrisma;
+        return fn(txWithQueryRaw);
+      },
     );
   });
 
