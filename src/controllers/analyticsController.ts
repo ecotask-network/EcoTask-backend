@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { TaskStatus } from '@prisma/client';
 
 export async function getPlatformAnalytics(_req: Request, res: Response) {
   const [totalTasks, activeTasks, totalUsers, totalProofs, approvedProofs] =
     await Promise.all([
       prisma.task.count(),
-      prisma.task.count({ where: { status: 'ACTIVE' } }),
+      prisma.task.count({ where: { status: TaskStatus.ACTIVE } }),
       prisma.user.count(),
       prisma.proof.count(),
       prisma.proof.findMany({

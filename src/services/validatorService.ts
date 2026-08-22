@@ -1,6 +1,7 @@
 import prisma from '../utils/prisma.js';
 import config from '../config/default.js';
 import logger from '../utils/logger.js';
+import { UserRole } from '@prisma/client';
 import { notifyProofStatus } from './notificationService.js';
 import { claimCompletionSlot } from '../models/task.js';
 
@@ -32,7 +33,7 @@ export async function assignValidators(
   if (existing > 0) return 0;
 
   const validators = await prisma.user.findMany({
-    where: { role: 'validator', id: { not: proof.userId } },
+    where: { role: UserRole.VALIDATOR, id: { not: proof.userId } },
     orderBy: { reviewCount: 'asc' },
     take: count,
     select: { id: true },

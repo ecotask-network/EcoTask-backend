@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../utils/prisma.js';
+import { UserRole } from '@prisma/client';
 
 export async function adminMiddleware(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
@@ -7,7 +8,7 @@ export async function adminMiddleware(req: Request, res: Response, next: NextFun
   }
 
   const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-  if (!user || user.role !== 'admin') {
+  if (!user || user.role !== UserRole.ADMIN) {
     return res.status(403).json({ error: 'admin access required' });
   }
 

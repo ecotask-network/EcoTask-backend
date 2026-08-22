@@ -74,7 +74,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   (prisma.user.findUnique as jest.Mock).mockResolvedValue({
     id: 'admin-id',
-    role: 'admin',
+    role: 'ADMIN',
   });
 });
 
@@ -171,7 +171,7 @@ describe('Task Routes', () => {
     it('forbids non-admin users', async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue({
         id: 'user-id',
-        role: 'user',
+        role: 'USER',
       });
       const res = await request(app)
         .post('/tasks')
@@ -255,7 +255,7 @@ describe('Task Routes', () => {
     it('forbids non-admin users', async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue({
         id: 'user-id',
-        role: 'user',
+        role: 'USER',
       });
       const res = await request(app)
         .put('/tasks/some-id')
@@ -294,7 +294,7 @@ describe('Task Routes', () => {
     it('forbids non-admin users', async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue({
         id: 'user-id',
-        role: 'user',
+        role: 'USER',
       });
       const res = await request(app)
         .delete('/tasks/some-id')

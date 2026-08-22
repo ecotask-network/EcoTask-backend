@@ -57,7 +57,7 @@ async function seed(): Promise<void> {
     id: `${RUN}-u-${i + 1}`,
     wallet: `${RUN}-wallet-${i + 1}`,
     name: `User ${i + 1}`,
-    role: 'user',
+    role: 'USER',
     createdAt: new Date(),
     updatedAt: new Date(),
   }));

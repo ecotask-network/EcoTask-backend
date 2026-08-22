@@ -1,10 +1,10 @@
 import prisma from '../utils/prisma.js';
 import { decodeCursor, encodeCursor } from '../utils/cursor.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, TaskStatus } from '@prisma/client';
 
 export interface TaskFilters {
   type?: string;
-  status?: string;
+  status?: TaskStatus;
   minRewardMicros?: bigint;
   maxRewardMicros?: bigint;
   swLat?: number;
@@ -107,7 +107,7 @@ export async function updateTask(
     lng?: number;
     radiusMeters?: number;
     maxCompletions?: number;
-    status?: string;
+    status?: TaskStatus;
     expiresAt?: Date;
   },
 ) {
@@ -131,7 +131,11 @@ export type SlotClaimResult =
  * callers serialize on this row, and a caller that loses the race gets
  * zero rows back instead of a stale count.
  */
-type SlotRow = { completed_count: number; max_completions: number | null; status: string };
+type SlotRow = {
+  completed_count: number;
+  max_completions: number | null;
+  status: TaskStatus;
+};
 
 export async function claimCompletionSlot(
   tx: Prisma.TransactionClient,

@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import prisma from '../utils/prisma.js';
 import logger from '../utils/logger.js';
 import { getRequestId } from '../utils/requestContext.js';
+import { ProofStatus } from '@prisma/client';
 
 export interface NotificationInput {
   userId: string;
@@ -61,14 +62,14 @@ export async function createNotification(
 export async function notifyProofStatus(
   userId: string,
   proofId: string,
-  status: string,
+  status: ProofStatus,
   txOrRequestId: PrismaOrTx | string = prisma,
   requestId?: string,
 ): Promise<CreatedNotification> {
   const tx = typeof txOrRequestId === 'string' ? prisma : txOrRequestId;
   const resolvedRequestId =
     typeof txOrRequestId === 'string' ? txOrRequestId : (requestId ?? getRequestId());
-  const isApproved = status === 'APPROVED';
+  const isApproved = status === ProofStatus.APPROVED;
   const created = await createNotification(
     {
       userId,

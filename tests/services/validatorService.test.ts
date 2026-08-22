@@ -98,7 +98,7 @@ describe('ValidatorService', () => {
       expect(assigned).toBe(3);
       expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { role: 'validator', id: { not: 'owner-1' } },
+          where: { role: 'VALIDATOR', id: { not: 'owner-1' } },
           orderBy: { reviewCount: 'asc' },
         }),
       );

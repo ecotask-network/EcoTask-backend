@@ -48,8 +48,8 @@ describe('Task service: expiry sweep', () => {
 
     expect(result).toEqual({ tasksExpired: 0, claimsExpired: 4 });
     expect(mockPrisma.taskClaim.updateMany).toHaveBeenCalledWith({
-      where: { status: 'active', expiresAt: { lt: expect.any(Date) } },
-      data: { status: 'expired' },
+      where: { status: 'ACTIVE', expiresAt: { lt: expect.any(Date) } },
+      data: { status: 'EXPIRED' },
     });
   });
 
@@ -62,4 +62,3 @@ describe('Task service: expiry sweep', () => {
     expect(result).toEqual({ tasksExpired: 0, claimsExpired: 0 });
   });
 });
-

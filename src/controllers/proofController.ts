@@ -16,6 +16,7 @@ import { enqueueVerification } from '../workers/verificationWorker.js';
 import { claimCompletionSlot } from '../models/task.js';
 import logger from '../utils/logger.js';
 import { cleanupUploadedFiles } from '../middleware/upload.js';
+import { UserRole, TaskStatus, ClaimStatus } from '@prisma/client';
 
 type SubmissionEligibility =
   | { status: 404 | 400 | 403 | 409; error: string }
@@ -39,7 +40,7 @@ async function checkSubmissionEligibility(
   if (!task) {
     return { status: 404, error: 'task not found' };
   }
-  if (task.status !== 'ACTIVE') {
+  if (task.status !== TaskStatus.ACTIVE) {
     return { status: 400, error: 'task is not active' };
   }
 
@@ -47,7 +48,7 @@ async function checkSubmissionEligibility(
     where: {
       taskId,
       userId,
-      status: 'active',
+      status: ClaimStatus.ACTIVE,
       expiresAt: { gt: new Date() },
     },
     select: { id: true },
@@ -258,7 +259,7 @@ async function isAdmin(userId: string): Promise<boolean> {
     where: { id: userId },
     select: { role: true },
   });
-  return user?.role === 'admin';
+  return user?.role === UserRole.ADMIN;
 }
 
 export async function listPendingProofs(req: Request, res: Response) {

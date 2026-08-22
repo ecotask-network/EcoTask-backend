@@ -44,7 +44,7 @@ const mockUser = {
   name: 'Ada',
   bio: null,
   avatarUrl: null,
-  role: 'user',
+  role: 'USER',
   createdAt: new Date('2026-01-01'),
 };
 

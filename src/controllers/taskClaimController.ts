@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { ClaimStatus, TaskStatus } from '@prisma/client';
 
 const CLAIM_DURATION_MS = 24 * 60 * 60 * 1000;
 
@@ -12,7 +13,7 @@ export async function claimTask(req: Request, res: Response) {
     if (!task) {
       return { status: 404 as const, body: { error: 'task not found' } };
     }
-    if (task.status !== 'ACTIVE') {
+    if (task.status !== TaskStatus.ACTIVE) {
       return { status: 400 as const, body: { error: 'task is not active' } };
     }
 
@@ -22,7 +23,7 @@ export async function claimTask(req: Request, res: Response) {
 
     if (
       existingClaim &&
-      existingClaim.status === 'active' &&
+      existingClaim.status === ClaimStatus.ACTIVE &&
       existingClaim.expiresAt > new Date()
     ) {
       return { status: 409 as const, body: { error: 'task already claimed by you' } };
@@ -32,7 +33,7 @@ export async function claimTask(req: Request, res: Response) {
       const updated = await tx.taskClaim.update({
         where: { id: existingClaim.id },
         data: {
-          status: 'active',
+          status: ClaimStatus.ACTIVE,
           claimedAt: new Date(),
           expiresAt: new Date(Date.now() + CLAIM_DURATION_MS),
         },
@@ -44,7 +45,7 @@ export async function claimTask(req: Request, res: Response) {
       data: {
         userId,
         taskId,
-        status: 'active',
+        status: ClaimStatus.ACTIVE,
         expiresAt: new Date(Date.now() + CLAIM_DURATION_MS),
       },
     });
@@ -63,13 +64,13 @@ export async function releaseClaim(req: Request, res: Response) {
     where: { taskId_userId: { taskId, userId } },
   });
 
-  if (!claim || claim.status !== 'active') {
+  if (!claim || claim.status !== ClaimStatus.ACTIVE) {
     return res.status(404).json({ error: 'no active claim found' });
   }
 
   await prisma.taskClaim.update({
     where: { id: claim.id },
-    data: { status: 'released' },
+    data: { status: ClaimStatus.RELEASED },
   });
 
   return res.status(204).send();
@@ -81,7 +82,7 @@ export async function getTaskClaims(req: Request, res: Response) {
   const claims = await prisma.taskClaim.findMany({
     where: {
       taskId,
-      status: 'active',
+      status: ClaimStatus.ACTIVE,
       expiresAt: { gt: new Date() },
     },
     include: { user: { select: { id: true, wallet: true, name: true } } },

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TaskStatus } from '@prisma/client';
 
 export const loginSchema = z.object({
   wallet: z.string().length(56),
@@ -44,13 +45,13 @@ export const updateTaskSchema = z.object({
   lng: z.number().min(-180).max(180).optional(),
   radiusMeters: radiusMetersField.optional(),
   maxCompletions: maxCompletionsField.optional(),
-  status: z.enum(['ACTIVE', 'COMPLETED', 'EXPIRED']).optional(),
+  status: z.nativeEnum(TaskStatus).optional(),
   expiresAt: z.string().datetime().optional(),
 });
 
 export const listTasksQuerySchema = z.object({
   type: z.string().optional(),
-  status: z.string().optional(),
+  status: z.nativeEnum(TaskStatus).optional(),
   minReward: z.coerce.number().optional(),
   maxReward: z.coerce.number().optional(),
   swLat: z.coerce.number().min(-90).max(90).optional(),

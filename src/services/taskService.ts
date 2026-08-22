@@ -1,5 +1,6 @@
 import prisma from '../utils/prisma.js';
 import logger from '../utils/logger.js';
+import { TaskStatus, ClaimStatus } from '@prisma/client';
 
 export interface ExpirySweepResult {
   tasksExpired: number;
@@ -10,13 +11,13 @@ export async function expireOverdueTasks(): Promise<ExpirySweepResult> {
   const now = new Date();
 
   const tasks = await prisma.task.updateMany({
-    where: { status: 'ACTIVE', expiresAt: { lt: now } },
-    data: { status: 'EXPIRED' },
+    where: { status: TaskStatus.ACTIVE, expiresAt: { lt: now } },
+    data: { status: TaskStatus.EXPIRED },
   });
 
   const claims = await prisma.taskClaim.updateMany({
-    where: { status: 'active', expiresAt: { lt: now } },
-    data: { status: 'expired' },
+    where: { status: ClaimStatus.ACTIVE, expiresAt: { lt: now } },
+    data: { status: ClaimStatus.EXPIRED },
   });
 
   if (tasks.count > 0 || claims.count > 0) {

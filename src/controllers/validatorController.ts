@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { UserRole } from '@prisma/client';
 import { castValidatorVoteSchema } from '../utils/validation.js';
 import { listPendingReviews, castVote } from '../services/validatorService.js';
 
 export async function listValidators(_req: Request, res: Response) {
   const validators = await prisma.user.findMany({
-    where: { role: 'validator' },
+    where: { role: UserRole.VALIDATOR },
     select: {
       id: true,
       wallet: true,
@@ -31,7 +32,7 @@ export async function activateValidator(req: Request, res: Response) {
 
   const updated = await prisma.user.update({
     where: { id: user.id },
-    data: { role: 'validator' },
+    data: { role: UserRole.VALIDATOR },
     select: { id: true, wallet: true, role: true },
   });
 
@@ -46,13 +47,13 @@ export async function deactivateValidator(req: Request, res: Response) {
   if (!user) {
     return res.status(404).json({ error: 'user not found' });
   }
-  if (user.role === 'admin') {
+  if (user.role === UserRole.ADMIN) {
     return res.status(400).json({ error: 'cannot demote an admin user' });
   }
 
   const updated = await prisma.user.update({
     where: { id: user.id },
-    data: { role: 'user' },
+    data: { role: UserRole.USER },
     select: { id: true, wallet: true, role: true },
   });
 
