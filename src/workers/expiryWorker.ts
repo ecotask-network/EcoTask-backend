@@ -7,22 +7,30 @@ export const DEFAULT_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 let timer: NodeJS.Timeout | null = null;
 
 export async function runInitialSweep(): Promise<void> {
-  try {
-    const result = await expireOverdueTasks();
-    if (result.tasksExpired > 0 || result.claimsExpired > 0) {
-      logger.info('Initial expiry sweep completed', {
-        tasksExpired: result.tasksExpired,
-        claimsExpired: result.claimsExpired,
-      });
-    }
+  const p1 = expireOverdueTasks()
+    .then((result) => {
+      if (result.tasksExpired > 0 || result.claimsExpired > 0) {
+        logger.info('Initial expiry sweep completed', {
+          tasksExpired: result.tasksExpired,
+          claimsExpired: result.claimsExpired,
+        });
+      }
+    })
+    .catch((err) => {
+      logger.error('Initial expiry sweep failed', { err });
+    });
 
-    const recoveredCount = await recoverOrphanedProofs();
-    if (recoveredCount > 0) {
-      logger.info('Initial orphaned proofs recovery completed', { recoveredCount });
-    }
-  } catch (err) {
-    logger.error('Initial expiry sweep failed', { err });
-  }
+  const p2 = recoverOrphanedProofs()
+    .then((recoveredCount) => {
+      if (recoveredCount > 0) {
+        logger.info('Initial orphaned proofs recovery completed', { recoveredCount });
+      }
+    })
+    .catch((err) => {
+      logger.error('Initial orphaned proofs recovery failed', { err });
+    });
+
+  await Promise.all([p1, p2]);
 }
 
 export function startExpirySweeper(

@@ -270,6 +270,11 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         taskId: 'task-1',
         status: 'VERIFYING',
+        validatorVotes: [
+          { id: 'vote-0', validatorId: 'v0', verdict: 'approved' },
+          { id: 'vote-1', validatorId: 'v1', verdict: 'approved' },
+          { id: 'vote-2', validatorId: 'v2', verdict: 'rejected' },
+        ],
       });
 
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
