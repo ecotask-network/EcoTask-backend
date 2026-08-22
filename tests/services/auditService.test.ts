@@ -153,4 +153,120 @@ describe('auditService', () => {
       expect(mockExecuteRaw).toHaveBeenCalledTimes(3);
     });
   });
+
+  // ---------------------------------------------------------------------
+  // Regression tests for #60: scheduleFlush/drainQueue used to flip
+  // `draining` back to false the instant a batch was spliced off — i.e.
+  // *before* that batch's writes actually completed. An entry enqueued
+  // while those writes were still in flight would see `draining === false`
+  // and spin up a second, fully independent drainQueue invocation instead
+  // of being folded into the one already running. Under bursty traffic
+  // followed by a quiet tail (no further logAudit call to "get lucky" and
+  // re-trigger a flush), that overlap was the mechanism for real audit
+  // loss: concurrent, unserialized writes racing each other and, on the
+  // exhausted-retry path, some of them never landing.
+  // ---------------------------------------------------------------------
+  describe('concurrency: entries enqueued while a drain is in flight (#60)', () => {
+    it('never has two writes in flight at once — an entry enqueued mid-drain must wait for the current write, not start a second overlapping drainQueue', async () => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const resolvers: Array<() => void> = [];
+
+      mockExecuteRaw.mockImplementation(() => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise((resolve) => {
+          resolvers.push(() => {
+            inFlight -= 1;
+            resolve(1);
+          });
+        });
+      });
+
+      logAudit({ ...baseEntry, action: 'first' });
+
+      // Let the setImmediate fire so drainQueue starts its first write. That
+      // write is now suspended on an unresolved promise (resolvers[0]).
+      jest.runAllTimers();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(resolvers).toHaveLength(1);
+      expect(maxInFlight).toBe(1);
+
+      // A second entry arrives — e.g. a concurrent request's audit call —
+      // while the first write is still pending. This is the quiet tail:
+      // no further logAudit call happens after this one.
+      logAudit({ ...baseEntry, action: 'second' });
+
+      // Give any (buggy) newly-scheduled setImmediate every chance to fire
+      // before the first write resolves.
+      jest.runAllTimers();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // The queue must serialize writes: 'second' must not start until
+      // 'first' has finished, so at most one write is ever in flight.
+      expect(maxInFlight).toBe(1);
+      expect(resolvers).toHaveLength(1);
+
+      // Let 'second' resolve immediately once it starts, then finish 'first'
+      // and let the drain loop pick 'second' up on its own — no further
+      // logAudit call arrives (the quiet tail).
+      mockExecuteRaw.mockImplementation(() => Promise.resolve(1));
+      resolvers[0]();
+      await flushQueue();
+
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
+      expect(maxInFlight).toBe(1);
+    });
+
+    it('persists 100% of entries under a burst-then-idle pattern, including one enqueued mid-write, verified against the recorded writes', async () => {
+      mockExecuteRaw.mockResolvedValue(1);
+
+      // Burst of entries with no gaps between them.
+      const burstActions = ['burst-0', 'burst-1', 'burst-2', 'burst-3', 'burst-4'];
+      for (const action of burstActions) {
+        logAudit({ ...baseEntry, action });
+      }
+
+      // Kick off the drain and let it get partway through the burst.
+      jest.runAllTimers();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // One more entry arrives mid-drain, then everything goes idle —
+      // no further logAudit call follows it.
+      logAudit({ ...baseEntry, action: 'late-arrival' });
+
+      await flushQueue();
+
+      const persistedActions = mockExecuteRaw.mock.calls.map((call) => call[2] as string);
+      const expectedActions = [...burstActions, 'late-arrival'];
+
+      expect(persistedActions.sort()).toEqual(expectedActions.sort());
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(expectedActions.length);
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('does not surface a request-path error when the queue is under heavy concurrent load', async () => {
+      mockExecuteRaw.mockResolvedValue(1);
+      const total = 200;
+
+      expect(() => {
+        for (let i = 0; i < total; i++) {
+          logAudit({ ...baseEntry, action: `flood-${i}` });
+        }
+      }).not.toThrow();
+
+      // 200 sequential writes each need a few microtask turns to resolve;
+      // loop until the drain genuinely catches up instead of a fixed tick count.
+      for (let i = 0; i < total * 4 && mockExecuteRaw.mock.calls.length < total; i++) {
+        jest.runAllTimers();
+        await Promise.resolve();
+      }
+
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(total);
+    });
+  });
 });
