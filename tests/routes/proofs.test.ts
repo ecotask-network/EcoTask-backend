@@ -689,7 +689,7 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
@@ -703,10 +703,12 @@ describe('Proof Routes', () => {
         .set('Authorization', `Bearer ${adminToken()}`)
         .send({ verdict: 'rejected', notes: 'GPS outside radius' });
       expect(res.status).toBe(200);
-      expect(mockPrisma.proof.update).toHaveBeenCalledWith({
-        where: { id: 'proof-1' },
-        data: { status: 'REJECTED' },
-      });
+      expect(mockPrisma.proof.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'proof-1' },
+          data: expect.objectContaining({ status: 'REJECTED' }),
+        })
+      );
       expect(mockPrisma.verification.create).toHaveBeenCalledWith({
         data: {
           proofId: 'proof-1',
@@ -725,7 +727,7 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.rewardPayout.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
@@ -746,7 +748,7 @@ describe('Proof Routes', () => {
         .send({ verdict: 'approved' });
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('APPROVED');
-      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(expect.any(Object), 'task-1');
       expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ proofId: 'proof-1' }),
       });

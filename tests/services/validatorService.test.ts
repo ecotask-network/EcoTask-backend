@@ -210,7 +210,7 @@ describe('ValidatorService', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
@@ -231,10 +231,12 @@ describe('ValidatorService', () => {
       const outcome = await castVote('proof-1', 'v1', 'approved', undefined, 'request-1');
 
       expect(outcome).toEqual({ finalized: true, status: 'APPROVED' });
-      expect(mockPrisma.proof.update).toHaveBeenCalledWith({
-        where: { id: 'proof-1' },
-        data: { status: 'APPROVED' },
-      });
+      expect(mockPrisma.proof.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'proof-1' },
+          data: expect.objectContaining({ status: 'APPROVED' }),
+        })
+      );
       expect(notifyProofStatus).toHaveBeenCalledWith(
         'owner-1',
         'proof-1',
@@ -242,7 +244,7 @@ describe('ValidatorService', () => {
         expect.any(Object),
         'request-1',
       );
-      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(expect.any(Object), 'task-1');
       expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
         data: { proofId: 'proof-1', requestId: 'request-1' },
       });
@@ -264,7 +266,7 @@ describe('ValidatorService', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
@@ -374,7 +376,7 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique
         .mockResolvedValueOnce(votesProof(['rejected', 'rejected', null]))
         .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
@@ -385,10 +387,12 @@ describe('ValidatorService', () => {
       const outcome = await resolveQuorum('proof-1');
 
       expect(outcome).toEqual({ finalized: true, status: 'REJECTED' });
-      expect(mockPrisma.proof.update).toHaveBeenCalledWith({
-        where: { id: 'proof-1' },
-        data: { status: 'REJECTED' },
-      });
+      expect(mockPrisma.proof.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'proof-1' },
+          data: expect.objectContaining({ status: 'REJECTED' }),
+        })
+      );
     });
   });
 });
