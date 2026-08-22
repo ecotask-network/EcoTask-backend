@@ -96,8 +96,12 @@ function userToken(): string {
   );
 }
 
+const mockQueryRaw = jest.fn();
+
 beforeEach(() => {
   jest.clearAllMocks();
+  mockQueryRaw.mockReset();
+  mockQueryRaw.mockResolvedValue([{ status: 'PENDING', task_id: 'task-1', user_id: 'user-id' }]);
   const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
     uploadToIPFS: jest.Mock;
   };
@@ -106,7 +110,11 @@ beforeEach(() => {
     // Interactive-transaction form used by submitProof: the callback receives
     // the mock client itself, so tx.task/tx.taskClaim/... hit the same mocks.
     if (typeof arg === 'function') {
-      return (arg as (tx: unknown) => unknown)(mockPrisma);
+      const txWithQueryRaw = {
+        ...mockPrisma,
+        $queryRaw: mockQueryRaw,
+      };
+      return (arg as (tx: unknown) => unknown)(txWithQueryRaw);
     }
     const ops = arg as Promise<unknown>[];
     for (const op of ops) await op;
@@ -681,7 +689,7 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
@@ -695,10 +703,12 @@ describe('Proof Routes', () => {
         .set('Authorization', `Bearer ${adminToken()}`)
         .send({ verdict: 'rejected', notes: 'GPS outside radius' });
       expect(res.status).toBe(200);
-      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
-        where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
-        data: { status: 'REJECTED' },
-      });
+      expect(mockPrisma.proof.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'proof-1' },
+          data: expect.objectContaining({ status: 'REJECTED' }),
+        })
+      );
       expect(mockPrisma.verification.create).toHaveBeenCalledWith({
         data: {
           proofId: 'proof-1',
@@ -717,7 +727,7 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.rewardPayout.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
@@ -738,7 +748,7 @@ describe('Proof Routes', () => {
         .send({ verdict: 'approved' });
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('APPROVED');
-      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(expect.any(Object), 'task-1');
       expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ proofId: 'proof-1' }),
       });

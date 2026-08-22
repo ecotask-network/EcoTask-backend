@@ -44,6 +44,8 @@ jest.mock('../../src/utils/logger', () => ({
 
 import prisma from '../../src/utils/prisma';
 
+const mockQueryRaw = jest.fn();
+
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
   user: { findMany: jest.Mock; update: jest.Mock };
@@ -74,8 +76,16 @@ function votesProof(verdicts: (string | null)[]) {
 describe('ValidatorService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockQueryRaw.mockReset();
+    mockQueryRaw.mockResolvedValue([{ status: 'VERIFYING', task_id: 'task-1', user_id: 'owner-1' }]);
     mockPrisma.$transaction.mockImplementation(
-      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+        const txWithQueryRaw = {
+          ...mockPrisma,
+          $queryRaw: mockQueryRaw,
+        } as unknown as typeof mockPrisma;
+        return fn(txWithQueryRaw);
+      },
     );
   });
 
@@ -200,7 +210,7 @@ describe('ValidatorService', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
@@ -221,18 +231,20 @@ describe('ValidatorService', () => {
       const outcome = await castVote('proof-1', 'v1', 'approved', undefined, 'request-1');
 
       expect(outcome).toEqual({ finalized: true, status: 'APPROVED' });
-      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
-        where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
-        data: { status: 'APPROVED' },
-      });
+      expect(mockPrisma.proof.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'proof-1' },
+          data: expect.objectContaining({ status: 'APPROVED' }),
+        })
+      );
       expect(notifyProofStatus).toHaveBeenCalledWith(
         'owner-1',
         'proof-1',
         'APPROVED',
-        mockPrisma,
+        expect.any(Object),
         'request-1',
       );
-      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(expect.any(Object), 'task-1');
       expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
         data: { proofId: 'proof-1', requestId: 'request-1' },
       });
@@ -254,7 +266,7 @@ describe('ValidatorService', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
@@ -301,11 +313,9 @@ describe('ValidatorService', () => {
         .mockResolvedValueOnce(votesProof(['approved', 'approved']))
         .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' });
 
-      let updateManyCount = 0;
-      mockPrisma.proof.updateMany.mockImplementation(async () => {
-        updateManyCount++;
-        return { count: updateManyCount === 1 ? 1 : 0 };
-      });
+      mockQueryRaw
+        .mockResolvedValueOnce([{ status: 'VERIFYING', task_id: 'task-1', user_id: 'owner-1' }])
+        .mockResolvedValueOnce([{ status: 'APPROVED', task_id: 'task-1', user_id: 'owner-1' }]);
       mockPrisma.verification.create.mockResolvedValue({});
 
       const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
@@ -366,7 +376,7 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique
         .mockResolvedValueOnce(votesProof(['rejected', 'rejected', null]))
         .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' });
-      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         userId: 'owner-1',
         taskId: 'task-1',
@@ -377,10 +387,12 @@ describe('ValidatorService', () => {
       const outcome = await resolveQuorum('proof-1');
 
       expect(outcome).toEqual({ finalized: true, status: 'REJECTED' });
-      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
-        where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
-        data: { status: 'REJECTED' },
-      });
+      expect(mockPrisma.proof.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'proof-1' },
+          data: expect.objectContaining({ status: 'REJECTED' }),
+        })
+      );
     });
   });
 });

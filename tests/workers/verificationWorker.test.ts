@@ -67,6 +67,8 @@ import {
 import prisma from '../../src/utils/prisma';
 import { notifyProofStatus } from '../../src/services/notificationService';
 
+const mockQueryRaw = jest.fn();
+
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
   verification: { create: jest.Mock };
@@ -82,8 +84,16 @@ const processor = (Worker as unknown as jest.Mock).mock.calls[0][1] as (job: {
 describe('Verification Worker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockQueryRaw.mockReset();
+    mockQueryRaw.mockResolvedValue([{ status: 'VERIFYING', task_id: 'task-1', user_id: 'user-1' }]);
     mockPrisma.$transaction.mockImplementation(
-      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+        const txWithQueryRaw = {
+          ...mockPrisma,
+          $queryRaw: mockQueryRaw,
+        } as unknown as typeof mockPrisma;
+        return fn(txWithQueryRaw);
+      },
     );
   });
 
@@ -186,14 +196,14 @@ describe('Verification Worker', () => {
       where: { id: 'proof-1' },
       data: { status: 'APPROVED' },
     });
-    expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+    expect(claimCompletionSlot).toHaveBeenCalledWith(expect.any(Object), 'task-1');
 
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(notifyProofStatus).toHaveBeenCalledWith(
       'user-1',
       'proof-1',
       'APPROVED',
-      mockPrisma,
+      expect.any(Object),
       'request-1',
     );
     expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
@@ -229,7 +239,7 @@ describe('Verification Worker', () => {
       'user-1',
       'proof-1',
       'REJECTED',
-      mockPrisma,
+      expect.any(Object),
     );
     expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
   });
