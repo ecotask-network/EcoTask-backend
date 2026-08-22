@@ -1,17 +1,19 @@
 import { Worker, Queue } from 'bullmq';
+import type { ConnectionOptions } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
-import { assignValidators } from '../services/validatorService.js';
-import { finalizeProofStatus } from '../services/proofFinalizationService.js';
-import config from '../config/default.js';
-import IORedis from 'ioredis';
+import { assignValidators } from '../services/validatorService';
+import { claimCompletionSlot } from '../models/task';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
+// BullMQ bundles its own ioredis, so its `ConnectionOptions` is a structurally
+// distinct type from our top-level ioredis `Redis`. The cast is purely
+// type-level: both are the same ioredis client at runtime.
+const connection = redisConnectionManager.getClient() as ConnectionOptions;
 
 const queueName = QUEUE_NAMES.proofVerification;
 const retentionOptions = getQueueRetentionOptions(queueName);
@@ -163,7 +165,6 @@ worker.on('failed', (job, err) =>
 export async function shutdownVerificationWorker(): Promise<void> {
   await worker.close();
   await verificationQueue.close();
-  await connection.quit();
   logger.info('Verification worker shut down');
 }
 

@@ -4,6 +4,7 @@ import {
   hasMinimumResolution,
   isRecentlyCaptured,
   hasFutureCaptureSkew,
+  isCorruptPhoto,
 } from './photoService';
 
 interface VerificationResult {
@@ -96,13 +97,14 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
 
   // Photographic evidence is the core promise of a proof submission: no
   // combination of GPS/duplicate/expiry checks may auto-approve a proof that
-  // has no photos attached, no matter how high the rest of the score is.
-  // A photo-less proof can still land as inconclusive (routed to community
-  // validators) if the remaining signals are otherwise plausible, but never
-  // as an automatic approval.
-  const hasPhotos = proof.photos.length > 0;
+  // has no photos attached or contains corrupt/unreadable photos, no matter how
+  // high the rest of the score is. A photo-less or corrupt-photo proof can still
+  // land as inconclusive (routed to community validators) if the remaining
+  // signals are otherwise plausible, but never as an automatic approval.
+  const hasCorruptPhotos = proof.photos.some(isCorruptPhoto);
+  const hasValidPhotos = proof.photos.length > 0 && !hasCorruptPhotos;
 
-  if (score >= 0.7 && hasPhotos) return { verdict: 'approved', confidence: score };
+  if (score >= 0.7 && hasValidPhotos) return { verdict: 'approved', confidence: score };
   if (score >= 0.4) return { verdict: 'inconclusive', confidence: score };
   return {
     verdict: 'rejected',

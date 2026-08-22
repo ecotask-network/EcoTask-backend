@@ -13,6 +13,9 @@ jest.mock('bullmq', () => ({
 
 jest.mock('ioredis', () => {
   class MockRedis {
+    on() {
+      return this;
+    }
     quit() {
       return Promise.resolve();
     }
