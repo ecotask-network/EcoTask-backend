@@ -3,6 +3,7 @@ import config from '../config/default.js';
 import logger from '../utils/logger.js';
 import { notifyProofStatus } from './notificationService.js';
 import { claimCompletionSlot } from '../models/task.js';
+import { finalizeProofStatus } from './proofFinalizationService.js';
 
 const AUTO_VERIFIER_ID = 'quorum';
 
@@ -164,49 +165,28 @@ async function finalizeProof(
   submitted: { validatorId: string; verdict: string | null }[],
   requestId?: string,
 ): Promise<QuorumOutcome> {
-  const requestedStatus = verdict === 'approved' ? 'APPROVED' : 'REJECTED';
+  const verdictStr = verdict === 'approved' ? 'APPROVED' : 'REJECTED';
   const agreement = submitted.filter((v) => v.verdict === verdict);
   const disagreement = submitted.filter((v) => v.verdict !== verdict);
 
-  const result = await prisma.$transaction(async (tx) => {
-    const proofRow = await tx.proof.findUnique({
-      where: { id: proofId },
-      select: { taskId: true, status: true },
+  let result;
+  try {
+    result = await finalizeProofStatus({
+      proofId,
+      verifierId: AUTO_VERIFIER_ID,
+      verdict,
+      notes: `quorum of ${agreement.length} validators`,
+      requestId,
+      expectedStatuses: ['VERIFYING'],
     });
-    if (!proofRow) return null;
-    if (proofRow.status === 'APPROVED' || proofRow.status === 'REJECTED') {
-      return null;
+  } catch (err: any) {
+    if (err.name === 'ProofFinalizationError') {
+      return null as any;
     }
+    throw err;
+  }
 
-    let finalStatus: 'APPROVED' | 'REJECTED' = requestedStatus;
-    let taskCompleted = false;
-    let notes = `quorum of ${agreement.length} validators`;
-
-    if (requestedStatus === 'APPROVED') {
-      const slot = await claimCompletionSlot(tx, proofRow.taskId);
-      if (!slot.claimed) {
-        finalStatus = 'REJECTED';
-        notes += ' [auto-rejected: task reached max completions]';
-      } else {
-        taskCompleted = slot.taskCompleted;
-      }
-    }
-
-    const { count } = await tx.proof.updateMany({
-      where: { id: proofId, status: { in: ['PENDING', 'VERIFYING'] } },
-      data: { status: finalStatus },
-    });
-    if (count === 0) return null;
-
-    await tx.verification.create({
-      data: {
-        proofId,
-        verifierId: AUTO_VERIFIER_ID,
-        verdict,
-        notes,
-      },
-    });
-
+  await prisma.$transaction(async (tx) => {
     for (const v of agreement) {
       await tx.user.update({
         where: { id: v.validatorId },
@@ -219,29 +199,6 @@ async function finalizeProof(
         data: { validatorReputation: { decrement: 1 } },
       });
     }
-
-    const proofRecord = await tx.proof.findUnique({
-      where: { id: proofId },
-      select: { userId: true, taskId: true },
-    });
-    if (proofRecord) {
-      if (requestId) {
-        await notifyProofStatus(proofRecord.userId, proofId, finalStatus, tx, requestId);
-      } else {
-        await notifyProofStatus(proofRecord.userId, proofId, finalStatus, tx);
-      }
-    }
-
-    if (finalStatus === 'APPROVED') {
-      await tx.rewardPayout.create({
-        data: {
-          proofId,
-          ...(requestId ? { requestId } : {}),
-        },
-      });
-    }
-
-    return { proofRecord, finalStatus, taskCompleted };
   });
 
   if (result?.proofRecord && result.finalStatus === 'APPROVED') {

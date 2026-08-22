@@ -1,9 +1,9 @@
 import { Worker, Queue } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
-import { assignValidators } from '../services/validatorService';
-import { claimCompletionSlot } from '../models/task';
-import config from '../config/default';
+import { assignValidators } from '../services/validatorService.js';
+import { finalizeProofStatus } from '../services/proofFinalizationService.js';
+import config from '../config/default.js';
 import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
@@ -73,50 +73,31 @@ const worker = new Worker<VerificationJobData>(
 
       const result = await autoVerify(proofId);
 
-      if (result.verdict === 'approved') {
-        const { finalStatus, taskCompleted } = await prisma.$transaction(async (tx) => {
-          let finalStatus: 'APPROVED' | 'REJECTED' = 'APPROVED';
-          let taskCompleted = false;
-          let notes = result.notes || `confidence: ${result.confidence}`;
-
-          const slot = await claimCompletionSlot(tx, proof.taskId);
-          if (!slot.claimed) {
-            finalStatus = 'REJECTED';
-            notes += ' [auto-rejected: task reached max completions]';
-          } else {
-            taskCompleted = slot.taskCompleted;
-          }
-
-          await tx.proof.update({
-            where: { id: proofId },
-            data: { status: finalStatus },
+      let finalStatus = 'REJECTED';
+      let taskCompleted = false;
+      try {
+        if (result.verdict === 'approved' || result.verdict === 'rejected') {
+          const res = await finalizeProofStatus({
+            proofId,
+            verifierId: 'auto-verifier',
+            verdict: result.verdict,
+            notes: result.notes || `confidence: ${result.confidence}`,
+            requestId,
+            expectedStatuses: ['VERIFYING'],
           });
-          await tx.verification.create({
-            data: {
-              proofId,
-              verifierId: 'auto-verifier',
-              verdict: result.verdict,
-              notes,
-            },
-          });
-          if (requestId) {
-            await notifyProofStatus(proof.userId, proofId, finalStatus, tx, requestId);
-          } else {
-            await notifyProofStatus(proof.userId, proofId, finalStatus, tx);
-          }
-
-          if (finalStatus === 'APPROVED') {
-            await tx.rewardPayout.create({
-              data: {
-                proofId,
-                ...(requestId ? { requestId } : {}),
-              },
-            });
-          }
-
-          return { finalStatus, taskCompleted };
+          finalStatus = res.finalStatus;
+          taskCompleted = res.taskCompleted;
+        }
+      } catch (err) {
+        logger.error('Failed to finalize proof in verificationWorker', {
+          proofId,
+          err,
+          ...requestMeta,
         });
+        return;
+      }
 
+      if (result.verdict === 'approved') {
         if (finalStatus === 'APPROVED') {
           if (taskCompleted) {
             logger.info('Task reached capacity and was completed', {
@@ -132,25 +113,7 @@ const worker = new Worker<VerificationJobData>(
           });
         }
       } else if (result.verdict === 'rejected') {
-        await prisma.$transaction(async (tx) => {
-          await tx.proof.update({
-            where: { id: proofId },
-            data: { status: 'REJECTED' },
-          });
-          await tx.verification.create({
-            data: {
-              proofId,
-              verifierId: 'auto-verifier',
-              verdict: result.verdict,
-              notes: result.notes || `confidence: ${result.confidence}`,
-            },
-          });
-          if (requestId) {
-            await notifyProofStatus(proof.userId, proofId, 'REJECTED', tx, requestId);
-          } else {
-            await notifyProofStatus(proof.userId, proofId, 'REJECTED', tx);
-          }
-        });
+        // already handled by finalizeProofStatus
       } else {
         const assigned = await assignValidators(proofId);
         if (assigned > 0) {

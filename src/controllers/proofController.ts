@@ -13,7 +13,7 @@ import { isWithinZone } from '../services/geoService.js';
 import { hashFile, extractPhotoMetadata } from '../services/photoService.js';
 import { notifyProofStatus } from '../services/notificationService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
-import { claimCompletionSlot } from '../models/task.js';
+import { finalizeProofStatus } from '../services/proofFinalizationService.js';
 import logger from '../utils/logger.js';
 import { cleanupUploadedFiles } from '../middleware/upload.js';
 
@@ -317,58 +317,23 @@ export async function reviewProof(req: Request, res: Response) {
     return res.status(409).json({ error: 'proof already has a final verdict' });
   }
 
-  const requestedStatus = parsed.data.verdict === 'approved' ? 'APPROVED' : 'REJECTED';
-
-  const result = await prisma.$transaction(async (tx) => {
-    let finalStatus: 'APPROVED' | 'REJECTED' = requestedStatus;
-    let taskCompleted = false;
-    let notes = parsed.data.notes;
-
-    if (requestedStatus === 'APPROVED') {
-      const slot = await claimCompletionSlot(tx, proof.taskId);
-      if (!slot.claimed) {
-        finalStatus = 'REJECTED';
-        notes = `${notes ?? ''} [auto-rejected: task reached max completions]`.trim();
-      } else {
-        taskCompleted = slot.taskCompleted;
-      }
-    }
-
-    const { count } = await tx.proof.updateMany({
-      where: { id: proof.id, status: { in: ['PENDING', 'VERIFYING'] } },
-      data: { status: finalStatus },
+  const verdict = parsed.data.verdict === 'approved' ? 'approved' : 'rejected';
+  
+  let result;
+  try {
+    result = await finalizeProofStatus({
+      proofId: proof.id,
+      verifierId: req.user!.userId,
+      verdict,
+      notes: parsed.data.notes,
+      requestId: req.requestId,
+      expectedStatuses: ['PENDING'],
     });
-    if (count === 0) return null;
-
-    await tx.verification.create({
-      data: {
-        proofId: proof.id,
-        verifierId: req.user!.userId,
-        verdict: parsed.data.verdict,
-        notes,
-      },
-    });
-
-    if (req.requestId) {
-      await notifyProofStatus(proof.userId, proof.id, finalStatus, tx, req.requestId);
-    } else {
-      await notifyProofStatus(proof.userId, proof.id, finalStatus, tx);
+  } catch (err: any) {
+    if (err.name === 'ProofFinalizationError') {
+      return res.status(409).json({ error: err.message });
     }
-
-    if (finalStatus === 'APPROVED') {
-      await tx.rewardPayout.create({
-        data: {
-          proofId: proof.id,
-          ...(req.requestId ? { requestId: req.requestId } : {}),
-        },
-      });
-    }
-
-    return { finalStatus, taskCompleted };
-  });
-
-  if (!result) {
-    return res.status(409).json({ error: 'proof already has a final verdict' });
+    throw err;
   }
 
   if (result.finalStatus === 'APPROVED' && result.taskCompleted) {
