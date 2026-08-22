@@ -6,7 +6,7 @@ import { auditMiddleware } from '../middleware/audit.js';
 const router = Router();
 
 router.get('/me', authMiddleware, userController.getMe);
-router.get('/:id', userController.getUser);
+router.get('/:id', authMiddleware, userController.getUser);
 router.put(
   '/:id',
   authMiddleware,

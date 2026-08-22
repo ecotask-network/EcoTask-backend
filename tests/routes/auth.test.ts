@@ -84,11 +84,24 @@ jest.mock('../../src/services/rateLimitService', () => ({
   },
 }));
 
+jest.mock('../../src/utils/prisma', () => ({
+  __esModule: true,
+  default: { user: { findUnique: jest.fn() } },
+}));
+
+import prisma from '../../src/utils/prisma';
+
 const MOCK_WALLET = 'GBMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCKMOCK00';
 
-function signChallenge(kp: Keypair, challenge: string) {
-  return kp.sign(Buffer.from(`EcoTask login: ${challenge}`)).toString('hex');
-}
+beforeEach(() => {
+  jest.clearAllMocks();
+  // authMiddleware now resolves the caller's current user record from the DB.
+  (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+    id: '1',
+    wallet: MOCK_WALLET,
+    role: 'user',
+  });
+});
 
 describe('Auth Routes', () => {
   beforeEach(() => {

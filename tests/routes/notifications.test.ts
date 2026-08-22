@@ -22,6 +22,7 @@ jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
     user: {
+      findUnique: jest.fn(),
       update: jest.fn(),
     },
     notification: {
@@ -37,7 +38,7 @@ jest.mock('../../src/utils/prisma', () => ({
 import prisma from '../../src/utils/prisma';
 
 const mockPrisma = prisma as unknown as {
-  user: { update: jest.Mock };
+  user: { findUnique: jest.Mock; update: jest.Mock };
   notification: {
     findMany: jest.Mock;
     count: jest.Mock;
@@ -62,6 +63,11 @@ function userToken(): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockPrisma.user.findUnique.mockResolvedValue({
+    id: 'user-id',
+    wallet: 'GUSER...',
+    role: 'user',
+  });
 });
 
 describe('Notification Routes', () => {
