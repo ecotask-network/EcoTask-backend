@@ -30,10 +30,10 @@ describe('getUserImpact', () => {
 
     expect(result).toEqual({
       totalApproved: 5,
-      totalReward: 150,
+      totalReward: '150',
       byType: {
-        cleanup: { count: 3, reward: 90 },
-        recycling: { count: 2, reward: 60 },
+        cleanup: { count: 3, reward: '90' },
+        recycling: { count: 2, reward: '60' },
       },
     });
   });
@@ -50,10 +50,10 @@ describe('getUserImpact', () => {
 
     expect(result).toEqual({
       totalApproved: 2,
-      totalReward: 50,
+      totalReward: '50',
       byType: {
-        cleanup: { count: 1, reward: 50 },
-        unknown_type: { count: 1, reward: 0 },
+        cleanup: { count: 1, reward: '50' },
+        unknown_type: { count: 1, reward: '0' },
       },
     });
   });
@@ -65,9 +65,20 @@ describe('getUserImpact', () => {
 
     expect(result).toEqual({
       totalApproved: 0,
-      totalReward: 0,
+      totalReward: '0',
       byType: {},
     });
+  });
+
+  it('preserves precision for reward totals above the safe integer range', async () => {
+    mockPrisma.$queryRaw.mockResolvedValueOnce([
+      { task_type: 'cleanup', proof_count: 1n, total_reward_micros: 9007199254740993n },
+    ]);
+
+    const result = await getUserImpact('whale');
+
+    expect(result.totalReward).toBe('900719925.4740993');
+    expect(result.byType.cleanup.reward).toBe('900719925.4740993');
   });
 
   it('should execute single indexed SQL aggregation query', async () => {
