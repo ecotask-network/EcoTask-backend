@@ -10,7 +10,7 @@ jest.mock('../../src/utils/prisma', () => ({
   default: {
     task: { count: jest.fn() },
     user: { count: jest.fn() },
-    proof: { count: jest.fn(), findMany: jest.fn() },
+    proof: { count: jest.fn() },
     $queryRaw: jest.fn(),
   },
 }));
@@ -35,9 +35,8 @@ describe('Analytics Routes', () => {
       mockPrisma.task.count.mockResolvedValueOnce(6);
       mockPrisma.user.count.mockResolvedValue(25);
       mockPrisma.proof.count.mockResolvedValue(100);
-      mockPrisma.proof.findMany.mockResolvedValue([
-        { task: { rewardAmountMicros: 500000000n } },
-        { task: { rewardAmountMicros: 300000000n } },
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { count: 2, total_reward_micros: 800000000n },
       ]);
 
       const res = await request(app).get('/analytics/platform');

@@ -3,22 +3,23 @@ import prisma from '../utils/prisma.js';
 import { formatRewardAmount } from '../utils/reward.js';
 
 export async function getPlatformAnalytics(_req: Request, res: Response) {
-  const [totalTasks, activeTasks, totalUsers, totalProofs, approvedProofs] =
+  const [totalTasks, activeTasks, totalUsers, totalProofs, approvedStats] =
     await Promise.all([
       prisma.task.count(),
       prisma.task.count({ where: { status: 'ACTIVE' } }),
       prisma.user.count(),
       prisma.proof.count(),
-      prisma.proof.findMany({
-        where: { status: 'APPROVED' },
-        select: { task: { select: { rewardAmountMicros: true } } },
-      }),
+      prisma.$queryRaw<Array<{ count: number; total_reward_micros: bigint }>>`
+        SELECT COUNT(*)::int AS count,
+               COALESCE(SUM("reward_amount_micros"), 0)::bigint AS total_reward_micros
+        FROM "proofs" p
+        JOIN "tasks" t ON p."task_id" = t.id
+        WHERE p.status = 'APPROVED'
+      `,
     ]);
 
-  const totalRewardPaidMicros = approvedProofs.reduce(
-    (sum, proof) => sum + proof.task.rewardAmountMicros,
-    0n,
-  );
+  const approvedCount = approvedStats[0]?.count ?? 0;
+  const totalRewardPaidMicros = approvedStats[0]?.total_reward_micros ?? 0n;
   const totalRewardPaid = formatRewardAmount(totalRewardPaidMicros);
 
   return res.json({
@@ -27,7 +28,7 @@ export async function getPlatformAnalytics(_req: Request, res: Response) {
       activeTasks,
       users: totalUsers,
       proofs: totalProofs,
-      approvedProofs: approvedProofs.length,
+      approvedProofs: approvedCount,
       totalRewardPaid,
     },
     timestamp: new Date().toISOString(),
@@ -55,7 +56,7 @@ export async function getTrends(req: Request, res: Response) {
 
   return res.json({
     days,
-    points: rows.map((r) => ({
+    points: rows.map((r: { day: Date; count: number; reward_micros: bigint }) => ({
       day: r.day.toISOString().slice(0, 10),
       approvedProofs: Number(r.count),
       totalReward: formatRewardAmount(r.reward_micros),
