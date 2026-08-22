@@ -63,7 +63,16 @@ describe('VerificationService', () => {
       lat: -1.2921,
       lng: 36.8219,
       createdAt: new Date(),
-      photos: [{ id: 'photo-1', cid: 'cid-1', filename: 'test.jpg' }],
+      photos: [
+        {
+          id: 'photo-1',
+          cid: 'cid-1',
+          filename: 'test.jpg',
+          width: 1920,
+          height: 1080,
+          capturedAt: new Date(),
+        },
+      ],
       task: makeTask(),
     });
 
@@ -282,5 +291,176 @@ describe('VerificationService', () => {
     // Score: 0 + 0.15 + 0.10 + 0 + 0 + 0.10 + 0.20 = 0.55 → inconclusive
     expect(result.verdict).toBe('inconclusive');
     expect(result.confidence).toBe(0.55);
+  });
+
+  // ── Photo gate: no combination of GPS/duplicate/expiry checks may
+  //    auto-approve a proof with zero photos (see autoVerify's `hasPhotos`
+  //    gate). Table-driven over {photos} x {radius} x {expiry}. ────────────
+  describe('photo gate score matrix', () => {
+    const IN_RADIUS = { lat: -1.2921, lng: 36.8219 };
+    const OUT_OF_RADIUS = { lat: 0.0, lng: 0.0 };
+    const yesterday = new Date(Date.now() - 86400000);
+
+    function buildProof(opts: {
+      hasPhotos: boolean;
+      inRadius: boolean;
+      expired: boolean;
+    }) {
+      const proofCreatedAt = new Date();
+      const gps = opts.inRadius ? IN_RADIUS : OUT_OF_RADIUS;
+      const photos = opts.hasPhotos
+        ? [
+            {
+              id: 'photo-1',
+              cid: 'cid-1',
+              filename: 'test.jpg',
+              sha256: 'clean-hash',
+              width: 4032,
+              height: 3024,
+              capturedAt: proofCreatedAt,
+            },
+          ]
+        : [];
+
+      return {
+        id: 'proof-matrix',
+        lat: gps.lat,
+        lng: gps.lng,
+        createdAt: proofCreatedAt,
+        photos,
+        task: makeTask({ expiresAt: opts.expired ? yesterday : null }),
+      };
+    }
+
+    it.each([
+      // hasPhotos, inRadius, expired, expectedVerdict, expectedConfidence
+      [true, true, false, 'approved', 1.05],
+      [true, true, true, 'approved', 0.85],
+      [true, false, false, 'inconclusive', 0.65],
+      [true, false, true, 'inconclusive', 0.45],
+      // Photo-less proofs: never approved, regardless of how favorable the
+      // remaining GPS/expiry signals are — this is the regression guard for
+      // the auto-approval bug (in-radius + no-expiry used to score 0.75 and
+      // clear the 0.7 approval threshold with zero photographic evidence).
+      [false, true, false, 'inconclusive', 0.75],
+      [false, true, true, 'inconclusive', 0.55],
+      [false, false, false, 'rejected', 0.35],
+      [false, false, true, 'rejected', 0.15],
+    ] as const)(
+      'hasPhotos=%s inRadius=%s expired=%s → %s (confidence %s)',
+      async (hasPhotos, inRadius, expired, expectedVerdict, expectedConfidence) => {
+        mockPrisma.proof.findUnique.mockResolvedValue(
+          buildProof({ hasPhotos, inRadius, expired }),
+        );
+
+        const result = await autoVerify('proof-matrix');
+
+        expect(result.verdict).toBe(expectedVerdict);
+        expect(result.confidence).toBeCloseTo(expectedConfidence, 10);
+      },
+    );
+
+    it('never approves a no-photos proof even when GPS and expiry are both favorable', async () => {
+      mockPrisma.proof.findUnique.mockResolvedValue(
+        buildProof({ hasPhotos: false, inRadius: true, expired: false }),
+      );
+
+      const result = await autoVerify('proof-matrix');
+
+      expect(result.verdict).not.toBe('approved');
+    });
+
+    // ── Corrupt photo gate ──────────────────────────────────────────────────
+    it('never auto-approves a proof with corrupt photos (width/height null) even with favorable GPS, unique hash, and no expiry', async () => {
+      // Score: GPS (0.40) + photos_present (0.15) + timestamp_not_forged (0.05) + not_duplicate (0.10) + no_expiry (0.20) = 0.90
+      // Because the photo is corrupt, it must NEVER auto-approve.
+      mockPrisma.proof.findUnique.mockResolvedValue({
+        id: 'proof-corrupt-photo',
+        lat: -1.2921,
+        lng: 36.8219,
+        createdAt: new Date(),
+        photos: [
+          {
+            id: 'photo-corrupt',
+            cid: 'cid-corrupt',
+            filename: 'garbage.jpg',
+            sha256: 'unique-corrupt-hash',
+            width: null,
+            height: null,
+            capturedAt: null,
+          },
+        ],
+        task: makeTask(),
+      });
+
+      const result = await autoVerify('proof-corrupt-photo');
+
+      expect(result.verdict).not.toBe('approved');
+      expect(result.verdict).toBe('inconclusive');
+      expect(result.confidence).toBeCloseTo(0.9, 10);
+    });
+
+    it('blocks auto-approval when proof contains mixed valid and corrupt photos', async () => {
+      mockPrisma.proof.findUnique.mockResolvedValue({
+        id: 'proof-mixed-photos',
+        lat: -1.2921,
+        lng: 36.8219,
+        createdAt: new Date(),
+        photos: [
+          {
+            id: 'photo-valid',
+            cid: 'cid-1',
+            filename: 'valid.jpg',
+            sha256: 'valid-hash',
+            width: 1920,
+            height: 1080,
+            capturedAt: new Date(),
+          },
+          {
+            id: 'photo-corrupt',
+            cid: 'cid-2',
+            filename: 'corrupt.jpg',
+            sha256: 'corrupt-hash',
+            width: null,
+            height: null,
+            capturedAt: null,
+          },
+        ],
+        task: makeTask(),
+      });
+
+      const result = await autoVerify('proof-mixed-photos');
+
+      expect(result.verdict).not.toBe('approved');
+      expect(result.verdict).toBe('inconclusive');
+    });
+
+    it('approves a valid photo without EXIF metadata when GPS and dimensions pass', async () => {
+      // Photo without EXIF: width/height are valid (e.g. 1920x1080), capturedAt is null.
+      // Score: GPS (0.40) + photos_present (0.15) + photo_quality (0.10) + timestamp_not_forged (0.05) + not_duplicate (0.10) + no_expiry (0.20) = 1.00
+      mockPrisma.proof.findUnique.mockResolvedValue({
+        id: 'proof-valid-no-exif',
+        lat: -1.2921,
+        lng: 36.8219,
+        createdAt: new Date(),
+        photos: [
+          {
+            id: 'photo-no-exif',
+            cid: 'cid-1',
+            filename: 'screenshot.png',
+            sha256: 'clean-png-hash',
+            width: 1920,
+            height: 1080,
+            capturedAt: null,
+          },
+        ],
+        task: makeTask(),
+      });
+
+      const result = await autoVerify('proof-valid-no-exif');
+
+      expect(result.verdict).toBe('approved');
+      expect(result.confidence).toBe(1.0);
+    });
   });
 });

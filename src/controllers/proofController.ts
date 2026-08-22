@@ -13,7 +13,6 @@ import { isWithinZone } from '../services/geoService.js';
 import { hashFile, extractPhotoMetadata } from '../services/photoService.js';
 import { notifyProofStatus } from '../services/notificationService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
-import { enqueueRewardPayout } from '../workers/rewardWorker.js';
 import { claimCompletionSlot } from '../models/task.js';
 import logger from '../utils/logger.js';
 import { cleanupUploadedFiles } from '../middleware/upload.js';
@@ -206,26 +205,26 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
         taskLng: preflight.task.lng,
         radiusMeters: preflight.task.radiusMeters,
       });
-    } else {
+    }
+
+    try {
+      await enqueueVerification(commitResult.proof.id, req.requestId);
+    } catch (err) {
       try {
-        await enqueueVerification(commitResult.proof.id, req.requestId);
-      } catch (err) {
-        try {
-          await prisma.$transaction(async (tx) => {
-            await tx.proofPhoto.deleteMany({
-              where: { proofId: commitResult.proof.id },
-            });
-            await tx.proof.delete({ where: { id: commitResult.proof.id } });
+        await prisma.$transaction(async (tx) => {
+          await tx.proofPhoto.deleteMany({
+            where: { proofId: commitResult.proof.id },
           });
-        } catch (cleanupErr) {
-          logger.error('Failed to roll back proof after verification enqueue error', {
-            cleanupErr,
-            proofId: commitResult.proof.id,
-            requestId: req.requestId,
-          });
-        }
-        throw err;
+          await tx.proof.delete({ where: { id: commitResult.proof.id } });
+        });
+      } catch (cleanupErr) {
+        logger.error('Failed to roll back proof after verification enqueue error', {
+          cleanupErr,
+          proofId: commitResult.proof.id,
+          requestId: req.requestId,
+        });
       }
+      throw err;
     }
 
     return respond(201, commitResult.proof);
@@ -320,7 +319,7 @@ export async function reviewProof(req: Request, res: Response) {
 
   const requestedStatus = parsed.data.verdict === 'approved' ? 'APPROVED' : 'REJECTED';
 
-  const { finalStatus, taskCompleted } = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     let finalStatus: 'APPROVED' | 'REJECTED' = requestedStatus;
     let taskCompleted = false;
     let notes = parsed.data.notes;
@@ -335,7 +334,12 @@ export async function reviewProof(req: Request, res: Response) {
       }
     }
 
-    await tx.proof.update({ where: { id: proof.id }, data: { status: finalStatus } });
+    const { count } = await tx.proof.updateMany({
+      where: { id: proof.id, status: { in: ['PENDING', 'VERIFYING'] } },
+      data: { status: finalStatus },
+    });
+    if (count === 0) return null;
+
     await tx.verification.create({
       data: {
         proofId: proof.id,
@@ -345,16 +349,30 @@ export async function reviewProof(req: Request, res: Response) {
       },
     });
 
+    if (req.requestId) {
+      await notifyProofStatus(proof.userId, proof.id, finalStatus, tx, req.requestId);
+    } else {
+      await notifyProofStatus(proof.userId, proof.id, finalStatus, tx);
+    }
+
+    if (finalStatus === 'APPROVED') {
+      await tx.rewardPayout.create({
+        data: {
+          proofId: proof.id,
+          ...(req.requestId ? { requestId: req.requestId } : {}),
+        },
+      });
+    }
+
     return { finalStatus, taskCompleted };
   });
 
-  await notifyProofStatus(proof.userId, proof.id, finalStatus, req.requestId);
+  if (!result) {
+    return res.status(409).json({ error: 'proof already has a final verdict' });
+  }
 
-  if (finalStatus === 'APPROVED') {
-    if (taskCompleted) {
-      logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
-    }
-    await enqueueRewardPayout(proof.id, req.requestId);
+  if (result.finalStatus === 'APPROVED' && result.taskCompleted) {
+    logger.info('Task reached capacity and was completed', { taskId: proof.taskId });
   }
 
   const updated = await prisma.proof.findUnique({

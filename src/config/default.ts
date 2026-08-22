@@ -83,4 +83,12 @@ export default {
     issuer: process.env.JWT_ISSUER || 'ecotask-backend',
     audience: process.env.JWT_AUDIENCE || 'ecotask-users',
   },
+  auth: {
+    challengeTtlMs: parseInt(process.env.CHALLENGE_TTL_MS || String(5 * 60 * 1000), 10),
+    challengeIssueWindowMs: parseInt(
+      process.env.CHALLENGE_ISSUE_RATE_LIMIT_WINDOW_MS || String(15 * 60 * 1000),
+      10,
+    ),
+    challengeIssueMax: parseInt(process.env.CHALLENGE_ISSUE_RATE_LIMIT_MAX || '10', 10),
+  },
 };

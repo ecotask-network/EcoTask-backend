@@ -21,9 +21,11 @@ jest.mock('../../src/utils/prisma', () => ({
       findMany: jest.fn(),
       count: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     proofPhoto: { create: jest.fn(), deleteMany: jest.fn() },
     verification: { create: jest.fn() },
+    rewardPayout: { create: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
@@ -37,7 +39,9 @@ jest.mock('../../src/workers/rewardWorker', () => ({
 }));
 
 jest.mock('../../src/models/task', () => ({
-  claimCompletionSlot: jest.fn().mockResolvedValue({ claimed: true, taskCompleted: false }),
+  claimCompletionSlot: jest
+    .fn()
+    .mockResolvedValue({ claimed: true, taskCompleted: false }),
 }));
 
 jest.mock('../../src/services/notificationService', () => ({
@@ -202,6 +206,46 @@ describe('Proof Routes', () => {
       ) as { enqueueVerification: jest.Mock };
       expect(enqueueVerification).toHaveBeenCalledWith(
         'proof-1',
+        res.headers['x-request-id'],
+      );
+    });
+
+    it('enqueues GPS-mismatch proofs for verification', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        lat: -1.2921,
+        lng: 36.8219,
+        radiusMeters: 100,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      mockPrisma.proof.create.mockResolvedValue({
+        id: 'proof-gps-mismatch',
+        userId: 'user-id',
+        taskId: 'task-1',
+        claimId: 'claim-1',
+        status: 'PENDING',
+        notes: 'gps_photo_mismatch',
+        photos: [{ id: 'photo-1', cid: 'mock-cid-test', filename: 'test-proof.jpg' }],
+        verifications: [],
+      });
+
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .field('lat', '-1.2921')
+        .field('lng', '36.8219')
+        .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
+
+      expect(res.status).toBe(201);
+
+      const { enqueueVerification } = jest.requireMock(
+        '../../src/workers/verificationWorker',
+      ) as { enqueueVerification: jest.Mock };
+
+      expect(enqueueVerification).toHaveBeenCalledWith(
+        'proof-gps-mismatch',
         res.headers['x-request-id'],
       );
     });
@@ -643,7 +687,7 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.update.mockResolvedValue({});
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.verification.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
@@ -657,8 +701,8 @@ describe('Proof Routes', () => {
         .set('Authorization', `Bearer ${adminToken()}`)
         .send({ verdict: 'rejected', notes: 'GPS outside radius' });
       expect(res.status).toBe(200);
-      expect(mockPrisma.proof.update).toHaveBeenCalledWith({
-        where: { id: 'proof-1' },
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+        where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
         data: { status: 'REJECTED' },
       });
       expect(mockPrisma.verification.create).toHaveBeenCalledWith({
@@ -679,8 +723,9 @@ describe('Proof Routes', () => {
         taskId: 'task-1',
         status: 'VERIFYING',
       });
-      mockPrisma.proof.update.mockResolvedValue({});
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.verification.create.mockResolvedValue({});
+      mockPrisma.rewardPayout.create.mockResolvedValue({});
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
         status: 'APPROVED',
@@ -692,9 +737,6 @@ describe('Proof Routes', () => {
         claimCompletionSlot: jest.Mock;
       };
       claimCompletionSlot.mockResolvedValue({ claimed: true, taskCompleted: true });
-      const { enqueueRewardPayout } = jest.requireMock(
-        '../../src/workers/rewardWorker',
-      ) as { enqueueRewardPayout: jest.Mock };
 
       const res = await request(app)
         .post('/proofs/proof-1/review')
@@ -703,10 +745,9 @@ describe('Proof Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('APPROVED');
       expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
-      expect(enqueueRewardPayout).toHaveBeenCalledWith(
-        'proof-1',
-        res.headers['x-request-id'],
-      );
+      expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ proofId: 'proof-1' }),
+      });
     });
   });
 });

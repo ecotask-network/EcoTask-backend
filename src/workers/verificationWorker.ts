@@ -1,18 +1,19 @@
 import { Worker, Queue } from 'bullmq';
+import type { ConnectionOptions } from 'bullmq';
 import { autoVerify } from '../services/verificationService';
 import { notifyProofStatus } from '../services/notificationService';
 import { assignValidators } from '../services/validatorService';
 import { claimCompletionSlot } from '../models/task';
-import { enqueueRewardPayout } from './rewardWorker';
-import config from '../config/default';
-import IORedis from 'ioredis';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
+// BullMQ bundles its own ioredis, so its `ConnectionOptions` is a structurally
+// distinct type from our top-level ioredis `Redis`. The cast is purely
+// type-level: both are the same ioredis client at runtime.
+const connection = redisConnectionManager.getClient() as ConnectionOptions;
 
 const queueName = QUEUE_NAMES.proofVerification;
 const retentionOptions = getQueueRetentionOptions(queueName);
@@ -49,25 +50,28 @@ const worker = new Worker<VerificationJobData>(
     return runWithRequestContext(requestId, async () => {
       logger.info('Processing proof verification', { proofId, ...requestMeta });
 
-      const proof = await prisma.proof.findUnique({
-        where: { id: proofId },
-        select: { userId: true, taskId: true, status: true },
+      const { count: claimed } = await prisma.proof.updateMany({
+        where: { id: proofId, status: 'PENDING' },
+        data: { status: 'VERIFYING' },
       });
-      if (!proof) throw new Error('Proof not found');
-
-      if (proof.status !== 'PENDING') {
+      if (claimed === 0) {
+        const existing = await prisma.proof.findUnique({
+          where: { id: proofId },
+          select: { status: true },
+        });
         logger.info('Skipping proof already processed', {
           proofId,
-          status: proof.status,
+          status: existing?.status ?? 'UNKNOWN',
           ...requestMeta,
         });
         return;
       }
 
-      await prisma.proof.update({
+      const proof = await prisma.proof.findUnique({
         where: { id: proofId },
-        data: { status: 'VERIFYING' },
+        select: { userId: true, taskId: true },
       });
+      if (!proof) throw new Error('Proof not found');
 
       const result = await autoVerify(proofId);
 
@@ -103,6 +107,15 @@ const worker = new Worker<VerificationJobData>(
             await notifyProofStatus(proof.userId, proofId, finalStatus, tx);
           }
 
+          if (finalStatus === 'APPROVED') {
+            await tx.rewardPayout.create({
+              data: {
+                proofId,
+                ...(requestId ? { requestId } : {}),
+              },
+            });
+          }
+
           return { finalStatus, taskCompleted };
         });
 
@@ -113,7 +126,6 @@ const worker = new Worker<VerificationJobData>(
               ...requestMeta,
             });
           }
-          await enqueueRewardPayout(proofId, requestId);
         } else {
           logger.info('Auto-approved proof rejected: task at capacity', {
             proofId,
@@ -190,7 +202,6 @@ worker.on('failed', (job, err) =>
 export async function shutdownVerificationWorker(): Promise<void> {
   await worker.close();
   await verificationQueue.close();
-  await connection.quit();
   logger.info('Verification worker shut down');
 }
 

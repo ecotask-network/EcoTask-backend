@@ -23,6 +23,7 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import prisma from './utils/prisma.js';
 import logger from './utils/logger.js';
 import config from './config/default.js';
+import { redisConnectionManager } from './utils/redisConnectionManager.js';
 
 if (process.env.NODE_ENV !== 'test') {
   import('./workers/verificationWorker.js');
@@ -37,6 +38,9 @@ if (process.env.NODE_ENV !== 'test') {
   });
   import('./workers/notificationOutboxSweeper.js').then(({ startOutboxSweeper }) => {
     startOutboxSweeper();
+  });
+  import('./services/rewardPayoutSweeper.js').then(({ startRewardPayoutSweeper }) => {
+    startRewardPayoutSweeper();
   });
 }
 
@@ -103,6 +107,9 @@ if (process.env.NODE_ENV !== 'test') {
       await shutdownNotificationWorker();
       logger.info('Notification dispatch worker shut down');
 
+      await redisConnectionManager.close();
+      logger.info('Redis connection closed');
+
       const { stopExpirySweeper } = await import('./workers/expiryWorker.js');
       stopExpirySweeper();
       logger.info('Expiry sweeper stopped');
@@ -111,6 +118,11 @@ if (process.env.NODE_ENV !== 'test') {
         await import('./workers/notificationOutboxSweeper.js');
       stopOutboxSweeper();
       logger.info('Notification outbox sweeper stopped');
+
+      const { stopRewardPayoutSweeper } =
+        await import('./services/rewardPayoutSweeper.js');
+      stopRewardPayoutSweeper();
+      logger.info('Reward payout sweeper stopped');
 
       await prisma.$disconnect();
       logger.info('Prisma client disconnected');

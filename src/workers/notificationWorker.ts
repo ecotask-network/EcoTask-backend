@@ -1,15 +1,14 @@
 import { Worker, Queue } from 'bullmq';
-import IORedis from 'ioredis';
-import config from '../config/default';
+import type { ConnectionOptions } from 'bullmq';
 import { dispatchNotification } from '../services/notificationDispatchService';
 import logger from '../utils/logger';
+import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 import { runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
 
-// Connections are created lazily so importing this module never opens a
-// socket; it only connects once a dispatch is enqueued or the worker starts.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let connection: any = null;
+// The queue is created lazily so importing this module never opens a socket;
+// the shared connection only connects once a dispatch is enqueued or the
+// worker starts.
 let queue: Queue<NotificationJobData> | null = null;
 let worker: Worker<NotificationJobData> | null = null;
 const queueName = QUEUE_NAMES.notificationDispatch;
@@ -21,16 +20,10 @@ interface NotificationJobData {
   requestId?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getConnection(): any {
-  if (!connection) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null }) as any;
-    connection.on('error', () => {
-      // Outbound delivery is best-effort; a failing Redis connection must not crash the API.
-    });
-  }
-  return connection;
+// BullMQ bundles its own ioredis; the cast is purely type-level — it is the
+// same shared ioredis client at runtime.
+function getConnection(): ConnectionOptions {
+  return redisConnectionManager.getClient() as ConnectionOptions;
 }
 
 export function getNotificationQueue(): Queue<NotificationJobData> {
@@ -112,10 +105,6 @@ export async function shutdownNotificationWorker(): Promise<void> {
   if (queue) {
     await queue.close();
     queue = null;
-  }
-  if (connection) {
-    await connection.quit();
-    connection = null;
   }
   logger.info('Notification dispatch worker shut down');
 }

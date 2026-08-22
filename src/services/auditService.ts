@@ -18,10 +18,16 @@ export interface AuditLogEntry {
 // ---------------------------------------------------------------------------
 // Write-through queue with retry
 //
-// The queue is an in-process array that is drained by setImmediate after each
-// enqueue. Each entry is attempted up to MAX_ATTEMPTS times with exponential
-// back-off. On final exhaustion a logger.error alert is raised so the failure
-// is never silently dropped.
+// The queue is an in-process array drained by a single long-running loop.
+// `draining` stays true for the *entire* drain session — not just while a
+// batch is being spliced off — so at most one drainQueue loop is ever
+// running. Entries enqueued while a write is in flight are simply picked up
+// by the loop re-checking the queue before it gives up, instead of spawning
+// a second, overlapping drainQueue invocation (which used to let two writes
+// race each other and could leave a quiet-tail entry with no flush ever
+// scheduled for it). Each entry is attempted up to MAX_ATTEMPTS times with
+// exponential back-off. On final exhaustion a logger.error alert is raised
+// so the failure is never silently dropped.
 // ---------------------------------------------------------------------------
 
 const MAX_ATTEMPTS = 3;
@@ -43,14 +49,19 @@ function scheduleFlush(): void {
 }
 
 async function drainQueue(): Promise<void> {
-  // Snapshot current items so new enqueues during a slow drain start a fresh
-  // cycle after this one finishes, rather than causing unbounded loops.
-  const batch = queue.splice(0, queue.length);
-  draining = false;
+  // Keep looping — and keep `draining` true — until the queue is confirmed
+  // empty. Anything pushed while the previous batch's writes were in flight
+  // is caught by re-checking queue.length rather than relying on a new
+  // logAudit call to schedule another cycle.
+  while (queue.length > 0) {
+    const batch = queue.splice(0, queue.length);
 
-  for (const item of batch) {
-    await writeWithRetry(item);
+    for (const item of batch) {
+      await writeWithRetry(item);
+    }
   }
+
+  draining = false;
 }
 
 async function writeWithRetry(item: QueueItem): Promise<void> {

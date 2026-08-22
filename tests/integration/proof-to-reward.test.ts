@@ -37,7 +37,7 @@ describe('Proof-to-Reward Integration', () => {
       status: 'PENDING',
       lat: -1.2921,
       lng: 36.8219,
-      photos: [{ id: 'photo-1', cid: 'cid-1' }],
+      photos: [{ id: 'photo-1', cid: 'cid-1', width: 1920, height: 1080 }],
       user: { wallet: 'GC...USER...' },
       task: {
         id: 'task-1',

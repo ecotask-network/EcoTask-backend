@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { formatRewardAmount } from '../utils/reward.js';
 
 export async function getPlatformAnalytics(_req: Request, res: Response) {
   const [totalTasks, activeTasks, totalUsers, totalProofs, approvedProofs] =
@@ -18,7 +19,7 @@ export async function getPlatformAnalytics(_req: Request, res: Response) {
     (sum, proof) => sum + proof.task.rewardAmountMicros,
     0n,
   );
-  const totalRewardPaid = Number(totalRewardPaidMicros) / 10000000;
+  const totalRewardPaid = formatRewardAmount(totalRewardPaidMicros);
 
   return res.json({
     totals: {
@@ -57,7 +58,7 @@ export async function getTrends(req: Request, res: Response) {
     points: rows.map((r) => ({
       day: r.day.toISOString().slice(0, 10),
       approvedProofs: Number(r.count),
-      totalReward: Number(r.reward_micros) / 10000000,
+      totalReward: formatRewardAmount(r.reward_micros),
     })),
     timestamp: new Date().toISOString(),
   });
