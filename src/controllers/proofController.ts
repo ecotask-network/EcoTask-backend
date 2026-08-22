@@ -205,26 +205,26 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
         taskLng: preflight.task.lng,
         radiusMeters: preflight.task.radiusMeters,
       });
-    } else {
+    }
+
+    try {
+      await enqueueVerification(commitResult.proof.id, req.requestId);
+    } catch (err) {
       try {
-        await enqueueVerification(commitResult.proof.id, req.requestId);
-      } catch (err) {
-        try {
-          await prisma.$transaction(async (tx) => {
-            await tx.proofPhoto.deleteMany({
-              where: { proofId: commitResult.proof.id },
-            });
-            await tx.proof.delete({ where: { id: commitResult.proof.id } });
+        await prisma.$transaction(async (tx) => {
+          await tx.proofPhoto.deleteMany({
+            where: { proofId: commitResult.proof.id },
           });
-        } catch (cleanupErr) {
-          logger.error('Failed to roll back proof after verification enqueue error', {
-            cleanupErr,
-            proofId: commitResult.proof.id,
-            requestId: req.requestId,
-          });
-        }
-        throw err;
+          await tx.proof.delete({ where: { id: commitResult.proof.id } });
+        });
+      } catch (cleanupErr) {
+        logger.error('Failed to roll back proof after verification enqueue error', {
+          cleanupErr,
+          proofId: commitResult.proof.id,
+          requestId: req.requestId,
+        });
       }
+      throw err;
     }
 
     return respond(201, commitResult.proof);
