@@ -1,5 +1,5 @@
 import config from '../config/default.js';
-import { expireOverdueTasks } from '../services/taskService.js';
+import { expireOverdueTasks, recoverOrphanedProofs } from '../services/taskService.js';
 import logger from '../utils/logger.js';
 
 export const DEFAULT_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
@@ -15,6 +15,11 @@ export async function runInitialSweep(): Promise<void> {
         claimsExpired: result.claimsExpired,
       });
     }
+
+    const recoveredCount = await recoverOrphanedProofs();
+    if (recoveredCount > 0) {
+      logger.info('Initial orphaned proofs recovery completed', { recoveredCount });
+    }
   } catch (err) {
     logger.error('Initial expiry sweep failed', { err });
   }
@@ -28,6 +33,9 @@ export function startExpirySweeper(
   timer = setInterval(() => {
     expireOverdueTasks().catch((err) => {
       logger.error('Scheduled expiry sweep failed', { err });
+    });
+    recoverOrphanedProofs().catch((err) => {
+      logger.error('Scheduled orphaned proofs recovery failed', { err });
     });
   }, intervalMs);
   timer.unref();
