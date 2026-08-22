@@ -9,6 +9,8 @@ export interface PerUserLimitOptions {
   max: number;
   scope: string;
   keyFn?: (req: Request) => string;
+  errorMessage?: string;
+  failClosed?: boolean;
 }
 
 /**
