@@ -11,30 +11,14 @@ jest.mock('ioredis', () => {
       on() {
         return this;
       }
-      multi() {
-        const ops: Array<{ type: string; key: string }> = [];
-        return {
-          incr(key: string) {
-            ops.push({ type: 'incr', key });
-            return this;
-          },
-          pttl(key: string) {
-            ops.push({ type: 'pttl', key });
-            return this;
-          },
-          async exec() {
-            return ops.map((op) => {
-              if (op.type === 'incr') {
-                const entry = store.get(op.key) || { count: 0, ttlMs: 0 };
-                entry.count += 1;
-                store.set(op.key, entry);
-                return [null, entry.count];
-              }
-              const entry = store.get(op.key) || { count: 0, ttlMs: 0 };
-              return [null, entry.ttlMs];
-            });
-          },
-        };
+      async eval(script: string, numKeys: number, key: string, windowMs: string | number) {
+        const entry = store.get(key) || { count: 0, ttlMs: 0 };
+        entry.count += 1;
+        if (entry.count === 1 || entry.ttlMs <= 0) {
+          entry.ttlMs = Number(windowMs);
+        }
+        store.set(key, entry);
+        return [entry.count, entry.ttlMs];
       }
       async expire(key: string, seconds: number) {
         const entry = store.get(key) || { count: 0, ttlMs: 0 };
@@ -123,13 +107,13 @@ describe('RedisRateLimiter', () => {
   it('surfaces Redis failures for the middleware to fail open', async () => {
     const limiter = new RedisRateLimiter();
     const client = limiter.getClient();
-    const originalMulti = client.multi.bind(client);
-    client.multi = () => {
+    const originalEval = client.eval.bind(client);
+    client.eval = () => {
       throw new Error('connection refused');
     };
 
     await expect(limiter.check('broken', 5, 60000)).rejects.toThrow('connection refused');
 
-    client.multi = originalMulti;
+    client.eval = originalEval;
   });
 });
