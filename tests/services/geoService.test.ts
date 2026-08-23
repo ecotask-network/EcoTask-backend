@@ -61,5 +61,14 @@ describe('geoService', () => {
         lng: { gte: -74.01, lte: -73.98 },
       });
     });
+
+    it('splits the longitude range when crossing the antimeridian', () => {
+      // Viewport from 170 (east) to -170 (west) wraps the date line.
+      const filter = buildBoundingBoxFilter(40.7, 170, 40.75, -170);
+      expect(filter).toEqual({
+        lat: { gte: 40.7, lte: 40.75 },
+        lng: { OR: [{ gte: 170 }, { lte: -170 }] },
+      });
+    });
   });
 });
