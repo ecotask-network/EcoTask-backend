@@ -1,0 +1,39 @@
+version: '3.8'
+# Isolated infra for the reward-payout soak test.
+# Uses a separate DB name (ecotask_soak) so it never touches the dev database.
+#
+# Usage:
+#   docker compose -f docker-compose.soak.yml up -d
+#   DATABASE_URL=postgresql://ecotask:ecotask@localhost:5433/ecotask_soak \
+#   REDIS_URL=redis://localhost:6380 \
+#   SOAK_TEST=true \
+#   npx prisma migrate deploy && \
+#   npx jest --runInBand tests/integration/reward-payout-soak.test.ts
+#   docker compose -f docker-compose.soak.yml down -v
+
+services:
+  postgres-soak:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ecotask
+      POSTGRES_PASSWORD: ecotask
+      POSTGRES_DB: ecotask_soak
+    ports:
+      - '5433:5432'     # offset port so it does not clash with the dev DB
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ecotask']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data   # RAM-backed for speed; data is ephemeral
+
+  redis-soak:
+    image: redis:7
+    ports:
+      - '6380:6379'     # offset port so it does not clash with the dev Redis
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10

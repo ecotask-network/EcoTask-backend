@@ -1,0 +1,93 @@
+name: Soak — Reward Payout Idempotency
+
+# Run on demand (workflow_dispatch) or on pushes that touch the reward pipeline.
+# Keep this separate from the main CI job so it does not slow every PR down.
+on:
+  workflow_dispatch:
+    inputs:
+      proof_count:
+        description: 'Number of proofs to process (default: 50)'
+        required: false
+        default: '50'
+      concurrency:
+        description: 'Sweeper concurrency (default: 4)'
+        required: false
+        default: '4'
+  push:
+    paths:
+      - 'src/workers/rewardWorker.ts'
+      - 'src/services/rewardPayoutSweeper.ts'
+      - 'tests/integration/reward-payout-soak.test.ts'
+      - 'prisma/schema.prisma'
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ecotask
+          POSTGRES_PASSWORD: ecotask
+          POSTGRES_DB: ecotask_soak
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://ecotask:ecotask@localhost:5432/ecotask_soak
+      REDIS_URL: redis://localhost:6379
+      SOAK_TEST: 'true'
+      SOAK_PROOF_COUNT: ${{ github.event.inputs.proof_count || '50' }}
+      SOAK_CONCURRENCY: ${{ github.event.inputs.concurrency || '4' }}
+      # Leave STELLAR_ORACLE_SECRET_KEY unset so submitReward returns mock-tx-* hashes.
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx prisma generate
+
+      - name: Apply migrations to soak DB
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://ecotask:ecotask@localhost:5432/ecotask_soak
+
+      - name: Build (type-check before running)
+        run: npm run build
+
+      - name: Run reward-payout soak test
+        run: |
+          npx jest --runInBand \
+            --testPathPattern 'tests/integration/reward-payout-soak' \
+            --forceExit \
+            --verbose
+        env:
+          DATABASE_URL: postgresql://ecotask:ecotask@localhost:5432/ecotask_soak
+          REDIS_URL: redis://localhost:6379
+          SOAK_TEST: 'true'
+          SOAK_PROOF_COUNT: ${{ github.event.inputs.proof_count || '50' }}
+          SOAK_CONCURRENCY: ${{ github.event.inputs.concurrency || '4' }}
+          NODE_ENV: test
