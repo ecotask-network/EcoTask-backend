@@ -18,7 +18,10 @@
 // ─── shared mock infrastructure ──────────────────────────────────────────────
 
 jest.mock('bullmq', () => ({
-  Worker: jest.fn(() => ({ on: jest.fn(), close: jest.fn().mockResolvedValue(undefined) })),
+  Worker: jest.fn(() => ({
+    on: jest.fn(),
+    close: jest.fn().mockResolvedValue(undefined),
+  })),
   Queue: jest.fn(() => ({
     add: jest.fn(),
     close: jest.fn().mockResolvedValue(undefined),
@@ -79,6 +82,7 @@ jest.mock('../../src/models/task', () => ({
 
 import { Worker } from 'bullmq';
 import prisma from '../../src/utils/prisma';
+import '../../src/workers/verificationWorker';
 
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
@@ -140,10 +144,16 @@ describe('Verdict ↔ Proof.status consistency (issue: capacity-rejected contrad
     });
 
     it('sets effectiveVerdict = "rejected" when slot is full despite approved autoVerify result', async () => {
-      const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      const { autoVerify } = jest.requireMock(
+        '../../src/services/verificationService',
+      ) as {
         autoVerify: jest.Mock;
       };
-      autoVerify.mockResolvedValue({ verdict: 'approved', confidence: 0.95, notes: 'ok' });
+      autoVerify.mockResolvedValue({
+        verdict: 'approved',
+        confidence: 0.95,
+        notes: 'ok',
+      });
       mockSlotFull();
 
       await workerProcessor({ id: 'job-1', data: { proofId: 'proof-1' } });
@@ -160,10 +170,16 @@ describe('Verdict ↔ Proof.status consistency (issue: capacity-rejected contrad
     });
 
     it('effectiveVerdict = "approved" when slot is available (happy path)', async () => {
-      const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      const { autoVerify } = jest.requireMock(
+        '../../src/services/verificationService',
+      ) as {
         autoVerify: jest.Mock;
       };
-      autoVerify.mockResolvedValue({ verdict: 'approved', confidence: 0.95, notes: 'ok' });
+      autoVerify.mockResolvedValue({
+        verdict: 'approved',
+        confidence: 0.95,
+        notes: 'ok',
+      });
       mockSlotOpen();
 
       await workerProcessor({ id: 'job-2', data: { proofId: 'proof-2' } });
@@ -177,10 +193,16 @@ describe('Verdict ↔ Proof.status consistency (issue: capacity-rejected contrad
     });
 
     it('effectiveVerdict = "rejected" when autoVerify itself rejects', async () => {
-      const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      const { autoVerify } = jest.requireMock(
+        '../../src/services/verificationService',
+      ) as {
         autoVerify: jest.Mock;
       };
-      autoVerify.mockResolvedValue({ verdict: 'rejected', confidence: 0.1, notes: 'bad gps' });
+      autoVerify.mockResolvedValue({
+        verdict: 'rejected',
+        confidence: 0.1,
+        notes: 'bad gps',
+      });
 
       await workerProcessor({ id: 'job-3', data: { proofId: 'proof-3' } });
 

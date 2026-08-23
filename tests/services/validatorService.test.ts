@@ -366,6 +366,7 @@ describe('ValidatorService', () => {
           proofId: 'proof-1',
           verifierId: 'quorum',
           verdict: 'inconclusive',
+          effectiveVerdict: 'inconclusive',
           notes: expect.stringContaining('admin review'),
         },
       });
