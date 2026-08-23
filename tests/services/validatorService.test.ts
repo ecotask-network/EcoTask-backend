@@ -272,11 +272,57 @@ describe('ValidatorService', () => {
       const updateCalls = mockPrisma.user.update.mock.calls;
       expect(updateCalls).toEqual(
         expect.arrayContaining([
+          [{ where: { id: 'v0' }, data: { reviewCount: { increment: 1 } } }],
+          [{ where: { id: 'v1' }, data: { reviewCount: { increment: 1 } } }],
+          [{ where: { id: 'v2' }, data: { reviewCount: { increment: 1 } } }],
           [{ where: { id: 'v0' }, data: { validatorReputation: { increment: 1 } } }],
           [{ where: { id: 'v1' }, data: { validatorReputation: { increment: 1 } } }],
           [{ where: { id: 'v2' }, data: { validatorReputation: { decrement: 1 } } }],
         ]),
       );
+    });
+
+    it('does not increment reviewCount when finalization rolls back', async () => {
+      mockPrisma.validatorVote.findUnique.mockResolvedValue({
+        id: 'vote-1',
+        verdict: null,
+        proof: { status: 'VERIFYING' },
+      });
+      mockPrisma.validatorVote.update.mockResolvedValue({});
+
+      mockPrisma.proof.findUnique.mockResolvedValueOnce(
+        votesProof(['approved', 'approved', null]),
+      );
+
+      mockPrisma.$transaction.mockImplementationOnce(
+        async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+          const tx = {
+            ...mockPrisma,
+            proof: {
+              ...mockPrisma.proof,
+              findUnique: jest
+                .fn()
+                .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' })
+                .mockResolvedValueOnce({ userId: 'owner-1', taskId: 'task-1' }),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            user: {
+              update: jest
+                .fn()
+                .mockRejectedValue(new Error('db fault during finalization')),
+            },
+            verification: { create: jest.fn() },
+            rewardPayout: { create: jest.fn() },
+          };
+          return fn(tx as typeof mockPrisma);
+        },
+      );
+
+      await expect(castVote('proof-1', 'v1', 'approved')).rejects.toThrow(
+        'db fault during finalization',
+      );
+
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
     it('concurrent finalizeProof calls are idempotent', async () => {
@@ -348,10 +394,15 @@ describe('ValidatorService', () => {
     it('escalates to admin when all votes are split without a quorum', async () => {
       mockPrisma.proof.findUnique.mockResolvedValue(votesProof(['approved']));
       mockPrisma.verification.create.mockResolvedValue({});
+      mockPrisma.user.update.mockResolvedValue({});
 
       const outcome = await resolveQuorum('proof-1');
 
       expect(outcome).toEqual({ finalized: false, escalated: true });
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'v0' },
+        data: { reviewCount: { increment: 1 } },
+      });
       expect(mockPrisma.verification.create).toHaveBeenCalledWith({
         data: {
           proofId: 'proof-1',

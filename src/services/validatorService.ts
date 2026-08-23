@@ -98,11 +98,6 @@ export async function castVote(
     data: { verdict, notes, decidedAt: new Date() },
   });
 
-  await prisma.user.update({
-    where: { id: validatorId },
-    data: { reviewCount: { increment: 1 } },
-  });
-
   return resolveQuorum(proofId, requestId);
 }
 
@@ -143,13 +138,22 @@ export async function resolveQuorum(
 
   const allVoted = submitted.length >= proof.validatorVotes.length;
   if (allVoted) {
-    await prisma.verification.create({
-      data: {
-        proofId,
-        verifierId: AUTO_VERIFIER_ID,
-        verdict: 'inconclusive',
-        notes: 'no quorum reached; escalated to admin review',
-      },
+    await prisma.$transaction(async (tx) => {
+      for (const v of submitted) {
+        await tx.user.update({
+          where: { id: v.validatorId },
+          data: { reviewCount: { increment: 1 } },
+        });
+      }
+
+      await tx.verification.create({
+        data: {
+          proofId,
+          verifierId: AUTO_VERIFIER_ID,
+          verdict: 'inconclusive',
+          notes: 'no quorum reached; escalated to admin review',
+        },
+      });
     });
     logger.info('Validator review escalated to admin (no quorum)', { proofId });
     return { finalized: false, escalated: true };
@@ -206,6 +210,13 @@ async function finalizeProof(
         notes,
       },
     });
+
+    for (const v of submitted) {
+      await tx.user.update({
+        where: { id: v.validatorId },
+        data: { reviewCount: { increment: 1 } },
+      });
+    }
 
     for (const v of agreement) {
       await tx.user.update({
