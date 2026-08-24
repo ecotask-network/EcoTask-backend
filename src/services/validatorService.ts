@@ -3,6 +3,7 @@ import config from '../config/default.js';
 import logger from '../utils/logger.js';
 import { notifyProofStatus } from './notificationService.js';
 import { claimCompletionSlot } from '../models/task.js';
+import { getProofTaskApprovalBlockReason } from '../utils/proofApproval.js';
 
 const AUTO_VERIFIER_ID = 'quorum';
 
@@ -219,7 +220,12 @@ async function finalizeProof(
   const result = await prisma.$transaction(async (tx) => {
     const proofRow = await tx.proof.findUnique({
       where: { id: proofId },
-      select: { taskId: true, status: true },
+      select: {
+        taskId: true,
+        status: true,
+        createdAt: true,
+        task: { select: { status: true, expiresAt: true } },
+      },
     });
     if (!proofRow) return null;
     if (proofRow.status === 'APPROVED' || proofRow.status === 'REJECTED') {
@@ -231,12 +237,21 @@ async function finalizeProof(
     let notes = `quorum of ${agreement.length} validators`;
 
     if (requestedStatus === 'APPROVED') {
-      const slot = await claimCompletionSlot(tx, proofRow.taskId);
-      if (!slot.claimed) {
+      const approvalBlockReason = getProofTaskApprovalBlockReason(
+        proofRow.createdAt,
+        proofRow.task,
+      );
+      if (approvalBlockReason) {
         finalStatus = 'REJECTED';
-        notes += ' [auto-rejected: task reached max completions]';
+        notes += ` [auto-rejected: ${approvalBlockReason}]`;
       } else {
-        taskCompleted = slot.taskCompleted;
+        const slot = await claimCompletionSlot(tx, proofRow.taskId, proofRow.createdAt);
+        if (!slot.claimed) {
+          finalStatus = 'REJECTED';
+          notes += ' [auto-rejected: task unavailable or at capacity]';
+        } else {
+          taskCompleted = slot.taskCompleted;
+        }
       }
     }
 

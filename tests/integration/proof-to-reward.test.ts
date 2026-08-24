@@ -38,6 +38,7 @@ describe('Proof-to-Reward Integration', () => {
       userId: 'user-1',
       taskId: 'task-1',
       status: 'PENDING',
+      createdAt: new Date(),
       lat: -1.2921,
       lng: 36.8219,
       photos: [
@@ -56,6 +57,7 @@ describe('Proof-to-Reward Integration', () => {
         lat: -1.2921,
         lng: 36.8219,
         radiusMeters: 100,
+        status: 'ACTIVE',
         rewardAmountMicros: 500000000n,
         rewardToken: 'ECO',
         expiresAt: null,
@@ -80,6 +82,7 @@ describe('Proof-to-Reward Integration', () => {
       id: 'proof-2',
       lat: null,
       lng: null,
+      createdAt: new Date(),
       photos: [],
       user: { wallet: 'GC...USER...' },
       task: {
@@ -87,6 +90,7 @@ describe('Proof-to-Reward Integration', () => {
         lat: -1.2921,
         lng: 36.8219,
         radiusMeters: 100,
+        status: 'EXPIRED',
         rewardAmountMicros: 500000000n,
         rewardToken: 'ECO',
         expiresAt: yesterday,
@@ -95,6 +99,6 @@ describe('Proof-to-Reward Integration', () => {
 
     const result = await autoVerify('proof-2');
     expect(result.verdict).toBe('rejected');
-    expect(result.notes).toMatch(/gps/);
+    expect(result.notes).toBe('task_expired_before_proof_submission');
   });
 });

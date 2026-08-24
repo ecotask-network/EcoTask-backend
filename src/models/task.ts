@@ -125,10 +125,10 @@ export type SlotClaimResult =
  * Atomically claims one completion slot on a task, transitioning it to
  * COMPLETED if this was the last slot. Must be called inside the same
  * transaction that sets a proof's status to APPROVED. The UPDATE's WHERE
- * clause (status ACTIVE AND completedCount < maxCompletions) and the row
- * lock Postgres takes during the UPDATE make this race-free: concurrent
- * callers serialize on this row, and a caller that loses the race gets
- * zero rows back instead of a stale count.
+ * clause enforces capacity and the proof-submission deadline. EXPIRED tasks
+ * accept only proofs submitted by their deadline, so asynchronous review
+ * latency does not invalidate legitimate work. The row lock Postgres takes
+ * during the UPDATE makes capacity claims race-free.
  */
 type SlotRow = {
   completed_count: number;
@@ -139,6 +139,7 @@ type SlotRow = {
 export async function claimCompletionSlot(
   tx: Prisma.TransactionClient,
   taskId: string,
+  proofSubmittedAt: Date,
 ): Promise<SlotClaimResult> {
   const rows = await tx.$queryRaw<SlotRow[]>`
     UPDATE tasks
@@ -147,7 +148,12 @@ export async function claimCompletionSlot(
           WHEN max_completions IS NOT NULL AND completed_count + 1 >= max_completions
           THEN 'COMPLETED' ELSE status
         END
-    WHERE id = ${taskId} AND status = 'ACTIVE'
+    WHERE id = ${taskId}
+      AND (
+        status = 'ACTIVE'
+        OR (status = 'EXPIRED' AND expires_at IS NOT NULL)
+      )
+      AND (expires_at IS NULL OR ${proofSubmittedAt} <= expires_at)
       AND (max_completions IS NULL OR completed_count < max_completions)
     RETURNING completed_count, max_completions, status
   `;

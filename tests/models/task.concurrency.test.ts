@@ -28,7 +28,7 @@ describe('claimCompletionSlot: atomic capacity enforcement (real DB)', () => {
 
   it('never exceeds maxCompletions under 6 simultaneous approvals, and completes exactly once', async () => {
     const attempts = Array.from({ length: 6 }, () =>
-      prisma.$transaction((tx) => claimCompletionSlot(tx, taskId)),
+      prisma.$transaction((tx) => claimCompletionSlot(tx, taskId, new Date())),
     );
 
     const results = await Promise.all(attempts);

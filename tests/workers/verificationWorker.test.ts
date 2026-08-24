@@ -141,6 +141,8 @@ describe('Verification Worker', () => {
       userId: 'user-1',
       taskId: 'task-1',
       status: 'PENDING',
+      createdAt: new Date('2026-08-23T11:00:00.000Z'),
+      task: { status: 'ACTIVE', expiresAt: null },
     });
     mockPrisma.proof.update.mockResolvedValue({});
     const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
@@ -157,11 +159,14 @@ describe('Verification Worker', () => {
   });
 
   it('approves valid proofs, checks capacity and creates payout outbox row', async () => {
+    const createdAt = new Date('2026-08-23T11:00:00.000Z');
     mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.proof.findUnique.mockResolvedValue({
       userId: 'user-1',
       taskId: 'task-1',
       status: 'PENDING',
+      createdAt,
+      task: { status: 'ACTIVE', expiresAt: null },
     });
     mockPrisma.proof.update.mockResolvedValue({});
     const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
@@ -191,7 +196,7 @@ describe('Verification Worker', () => {
       where: { id: 'proof-1' },
       data: { status: 'APPROVED' },
     });
-    expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+    expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1', createdAt);
 
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(notifyProofStatus).toHaveBeenCalledWith(
@@ -239,12 +244,50 @@ describe('Verification Worker', () => {
     expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
   });
 
+  it('rejects a post-deadline proof even if autoVerify reports approved', async () => {
+    const createdAt = new Date('2026-08-23T12:00:01.000Z');
+    mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      taskId: 'task-1',
+      createdAt,
+      task: {
+        status: 'EXPIRED',
+        expiresAt: new Date('2026-08-23T12:00:00.000Z'),
+      },
+    });
+    mockPrisma.proof.update.mockResolvedValue({});
+    const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      autoVerify: jest.Mock;
+    };
+    autoVerify.mockResolvedValue({ verdict: 'approved', confidence: 0.9 });
+    const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+      claimCompletionSlot: jest.Mock;
+    };
+
+    await processor({ id: 'job-expired', data: { proofId: 'proof-1' } });
+
+    expect(claimCompletionSlot).not.toHaveBeenCalled();
+    expect(mockPrisma.proof.update).toHaveBeenCalledWith({
+      where: { id: 'proof-1' },
+      data: { status: 'REJECTED' },
+    });
+    expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
+    expect(mockPrisma.verification.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        notes: expect.stringContaining('task_expired_before_proof_submission'),
+      }),
+    });
+  });
+
   it('assigns inconclusive proofs to community validators', async () => {
     mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.proof.findUnique.mockResolvedValue({
       userId: 'user-1',
       taskId: 'task-1',
       status: 'PENDING',
+      createdAt: new Date('2026-08-23T11:00:00.000Z'),
+      task: { status: 'ACTIVE', expiresAt: null },
     });
     mockPrisma.proof.update.mockResolvedValue({});
     const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
@@ -365,6 +408,8 @@ describe('Verification Worker', () => {
       userId: 'user-1',
       taskId: 'task-1',
       status: 'PENDING',
+      createdAt: new Date('2026-08-23T11:00:00.000Z'),
+      task: { status: 'ACTIVE', expiresAt: null },
     });
     mockPrisma.proof.update.mockResolvedValue({});
     const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {

@@ -6,6 +6,7 @@ import {
   hasFutureCaptureSkew,
   isCorruptPhoto,
 } from './photoService';
+import { getProofTaskApprovalBlockReason } from '../utils/proofApproval';
 
 interface VerificationResult {
   verdict: 'approved' | 'rejected' | 'inconclusive';
@@ -19,6 +20,16 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
     include: { task: true, photos: true },
   });
   if (!proof) throw new Error('Proof not found');
+
+  const proofCreatedAt = proof.createdAt ?? new Date();
+  const approvalBlockReason = getProofTaskApprovalBlockReason(proofCreatedAt, proof.task);
+  if (approvalBlockReason) {
+    return {
+      verdict: 'rejected',
+      confidence: 0,
+      notes: approvalBlockReason,
+    };
+  }
 
   const checks: { pass: boolean; weight: number; name: string }[] = [];
 
@@ -55,7 +66,6 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
 
   // ── Timestamp skew (EXIF capturedAt must not be in the future relative to
   //    proof submission — physically impossible; indicates a forged timestamp) ──
-  const proofCreatedAt = proof.createdAt ?? new Date();
   const hasSkewedTimestamp = proof.photos.some((photo) =>
     hasFutureCaptureSkew(photo.capturedAt, proofCreatedAt),
   );
@@ -86,12 +96,9 @@ export async function autoVerify(proofId: string): Promise<VerificationResult> {
   checks.push({ pass: true, weight: 0.1, name: 'photo_not_duplicate' });
 
   // ── Task expiry ─────────────────────────────────────────────────────────────
-  if (proof.task.expiresAt) {
-    const expired = new Date() > proof.task.expiresAt;
-    checks.push({ pass: !expired, weight: 0.2, name: 'task_not_expired' });
-  } else {
-    checks.push({ pass: true, weight: 0.2, name: 'task_no_expiry' });
-  }
+  // Deadline eligibility is a hard gate above. Eligible proofs retain this
+  // signal even when queue or review latency pushes finalization past expiry.
+  checks.push({ pass: true, weight: 0.2, name: 'proof_submitted_by_task_deadline' });
 
   const score = checks.reduce((sum, c) => sum + (c.pass ? c.weight : 0), 0);
 
