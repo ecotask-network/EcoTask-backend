@@ -610,7 +610,7 @@ describe('Proof Routes', () => {
     it('lists pending proofs for admins', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
       mockPrisma.proof.findMany.mockResolvedValue([
-        { id: 'proof-1', status: 'VERIFYING', photos: [], user: {}, task: {} },
+        { id: 'proof-1', status: 'PENDING', photos: [], user: {}, task: {} },
       ]);
       mockPrisma.proof.count.mockResolvedValue(1);
       const res = await request(app)
@@ -621,6 +621,36 @@ describe('Proof Routes', () => {
       expect(mockPrisma.proof.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: { in: ['PENDING', 'VERIFYING'] } },
+        }),
+      );
+    });
+
+    it('lists no-validator escalations through the admin review filter', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.proof.findMany.mockResolvedValue([
+        { id: 'proof-1', status: 'VERIFYING', photos: [], user: {}, task: {} },
+      ]);
+      mockPrisma.proof.count.mockResolvedValue(1);
+
+      const res = await request(app)
+        .get('/proofs/review')
+        .query({ reviewReason: 'no_validators' })
+        .set('Authorization', `Bearer ${userToken()}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveLength(1);
+      expect(mockPrisma.proof.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            status: { in: ['PENDING', 'VERIFYING'] },
+            verifications: {
+              some: {
+                verifierId: 'auto-verifier',
+                verdict: 'inconclusive',
+                notes: { contains: 'no validators available; escalated to admin review' },
+              },
+            },
+          },
         }),
       );
     });
@@ -673,7 +703,7 @@ describe('Proof Routes', () => {
       expect(res.status).toBe(409);
     });
 
-    it('rejects a proof and records the verification', async () => {
+    it('allows an admin to reject a no-validator escalated proof', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',

@@ -75,6 +75,7 @@ export const listProofsQuerySchema = z.object({
 
 export const listPendingProofsQuerySchema = z.object({
   status: z.enum(['PENDING', 'VERIFYING']).optional(),
+  reviewReason: z.enum(['no_validators']).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).default(20),
 });

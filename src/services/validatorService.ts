@@ -6,6 +6,10 @@ import { claimCompletionSlot } from '../models/task.js';
 
 const AUTO_VERIFIER_ID = 'quorum';
 
+export const MANUAL_REVIEW_VERIFIER_ID = 'auto-verifier';
+export const NO_VALIDATORS_REVIEW_MARKER =
+  'no validators available; escalated to admin review';
+
 export interface QuorumOutcome {
   finalized: boolean;
   status?: 'APPROVED' | 'REJECTED';
@@ -29,7 +33,7 @@ export async function assignValidators(
   if (proof.status !== 'VERIFYING' && proof.status !== 'PENDING') return 0;
 
   const existing = await prisma.validatorVote.count({ where: { proofId } });
-  if (existing > 0) return 0;
+  if (existing > 0) return existing;
 
   const validators = await prisma.user.findMany({
     where: { role: 'validator', id: { not: proof.userId } },
@@ -49,6 +53,46 @@ export async function assignValidators(
     assigned: validators.length,
   });
   return validators.length;
+}
+
+export async function escalateToManualReview(
+  proofId: string,
+  notes?: string,
+): Promise<boolean> {
+  const markerWhere = {
+    proofId,
+    verifierId: MANUAL_REVIEW_VERIFIER_ID,
+    verdict: 'inconclusive',
+    notes: { contains: NO_VALIDATORS_REVIEW_MARKER },
+  };
+
+  return prisma.$transaction(async (tx) => {
+    // Returning to PENDING uses the existing admin-reviewable state and locks
+    // the proof row against a concurrent final verdict.
+    const { count } = await tx.proof.updateMany({
+      where: { id: proofId, status: 'VERIFYING' },
+      data: { status: 'PENDING' },
+    });
+
+    const existing = await tx.verification.findFirst({
+      where: markerWhere,
+      select: { id: true },
+    });
+    if (existing) return true;
+    if (count === 0) return false;
+
+    await tx.verification.create({
+      data: {
+        proofId,
+        verifierId: MANUAL_REVIEW_VERIFIER_ID,
+        verdict: 'inconclusive',
+        notes: notes
+          ? `${notes} | ${NO_VALIDATORS_REVIEW_MARKER}`
+          : NO_VALIDATORS_REVIEW_MARKER,
+      },
+    });
+    return true;
+  });
 }
 
 export async function listPendingReviews(validatorId: string) {

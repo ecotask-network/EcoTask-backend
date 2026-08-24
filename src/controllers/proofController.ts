@@ -14,6 +14,10 @@ import { hashFile, extractPhotoMetadata } from '../services/photoService.js';
 import { notifyProofStatus } from '../services/notificationService.js';
 import { enqueueVerification } from '../workers/verificationWorker.js';
 import { claimCompletionSlot } from '../models/task.js';
+import {
+  MANUAL_REVIEW_VERIFIER_ID,
+  NO_VALIDATORS_REVIEW_MARKER,
+} from '../services/validatorService.js';
 import logger from '../utils/logger.js';
 import { cleanupUploadedFiles } from '../middleware/upload.js';
 
@@ -273,9 +277,22 @@ export async function listPendingProofs(req: Request, res: Response) {
   const limit = Math.min(parsed.data.limit, MAX_PAGINATION_LIMIT);
   const skip = (page - 1) * limit;
 
-  const where = parsed.data.status
-    ? { status: parsed.data.status }
-    : { status: { in: ['PENDING' as const, 'VERIFYING' as const] } };
+  const where: Prisma.ProofWhereInput = {
+    status: parsed.data.status
+      ? parsed.data.status
+      : { in: ['PENDING' as const, 'VERIFYING' as const] },
+    ...(parsed.data.reviewReason === 'no_validators'
+      ? {
+          verifications: {
+            some: {
+              verifierId: MANUAL_REVIEW_VERIFIER_ID,
+              verdict: 'inconclusive',
+              notes: { contains: NO_VALIDATORS_REVIEW_MARKER },
+            },
+          },
+        }
+      : {}),
+  };
 
   const [proofs, total] = await Promise.all([
     prisma.proof.findMany({

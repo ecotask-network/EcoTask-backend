@@ -2,6 +2,8 @@ import {
   assignValidators,
   listPendingReviews,
   castVote,
+  escalateToManualReview,
+  NO_VALIDATORS_REVIEW_MARKER,
   resolveQuorum,
 } from '../../src/services/validatorService';
 
@@ -17,7 +19,7 @@ jest.mock('../../src/utils/prisma', () => ({
       update: jest.fn(),
       findMany: jest.fn(),
     },
-    verification: { create: jest.fn() },
+    verification: { create: jest.fn(), findFirst: jest.fn() },
     rewardPayout: { create: jest.fn() },
     $transaction: jest.fn(),
   },
@@ -54,7 +56,7 @@ const mockPrisma = prisma as unknown as {
     update: jest.Mock;
     findMany: jest.Mock;
   };
-  verification: { create: jest.Mock };
+  verification: { create: jest.Mock; findFirst: jest.Mock };
   rewardPayout: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -111,7 +113,7 @@ describe('ValidatorService', () => {
       });
     });
 
-    it('skips proofs that already have assigned votes', async () => {
+    it('reports existing assignments without creating duplicates', async () => {
       mockPrisma.proof.findUnique.mockResolvedValue({
         userId: 'owner-1',
         status: 'VERIFYING',
@@ -120,7 +122,7 @@ describe('ValidatorService', () => {
 
       const assigned = await assignValidators('proof-1');
 
-      expect(assigned).toBe(0);
+      expect(assigned).toBe(2);
       expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
     });
 
@@ -147,6 +149,57 @@ describe('ValidatorService', () => {
       const assigned = await assignValidators('proof-1');
 
       expect(assigned).toBe(0);
+    });
+  });
+
+  describe('escalateToManualReview', () => {
+    it('creates one durable marker and remains idempotent on retry', async () => {
+      mockPrisma.proof.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      let markerExists = false;
+      mockPrisma.verification.findFirst.mockImplementation(async () =>
+        markerExists ? { id: 'manual-review-1' } : null,
+      );
+      mockPrisma.verification.create.mockImplementation(async () => {
+        markerExists = true;
+        return {};
+      });
+
+      await expect(escalateToManualReview('proof-1', 'partial evidence')).resolves.toBe(
+        true,
+      );
+      await expect(escalateToManualReview('proof-1', 'partial evidence')).resolves.toBe(
+        true,
+      );
+
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+        where: { id: 'proof-1', status: 'VERIFYING' },
+        data: { status: 'PENDING' },
+      });
+      expect(mockPrisma.verification.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.verification.create).toHaveBeenCalledWith({
+        data: {
+          proofId: 'proof-1',
+          verifierId: 'auto-verifier',
+          verdict: 'inconclusive',
+          notes: `partial evidence | ${NO_VALIDATORS_REVIEW_MARKER}`,
+        },
+      });
+    });
+
+    it('does not mark a proof that a finalizer already resolved', async () => {
+      mockPrisma.verification.findFirst.mockResolvedValue(null);
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(escalateToManualReview('proof-1')).resolves.toBe(false);
+
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+        where: { id: 'proof-1', status: 'VERIFYING' },
+        data: { status: 'PENDING' },
+      });
+      expect(mockPrisma.verification.create).not.toHaveBeenCalled();
     });
   });
 

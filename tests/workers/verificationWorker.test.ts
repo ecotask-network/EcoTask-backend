@@ -36,6 +36,7 @@ jest.mock('../../src/services/notificationService', () => ({
 }));
 
 jest.mock('../../src/services/validatorService', () => ({
+  ...jest.requireActual('../../src/services/validatorService'),
   assignValidators: jest.fn().mockResolvedValue(0),
 }));
 
@@ -43,7 +44,7 @@ jest.mock('../../src/utils/prisma', () => ({
   __esModule: true,
   default: {
     proof: { findUnique: jest.fn(), updateMany: jest.fn(), update: jest.fn() },
-    verification: { create: jest.fn() },
+    verification: { create: jest.fn(), findFirst: jest.fn() },
     rewardPayout: { create: jest.fn() },
     $transaction: jest.fn(),
   },
@@ -66,10 +67,11 @@ import {
 } from '../../src/workers/verificationWorker';
 import prisma from '../../src/utils/prisma';
 import { notifyProofStatus } from '../../src/services/notificationService';
+import { NO_VALIDATORS_REVIEW_MARKER } from '../../src/services/validatorService';
 
 const mockPrisma = prisma as unknown as {
   proof: { findUnique: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
-  verification: { create: jest.Mock };
+  verification: { create: jest.Mock; findFirst: jest.Mock };
   rewardPayout: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -77,11 +79,13 @@ const mockPrisma = prisma as unknown as {
 const processor = (Worker as unknown as jest.Mock).mock.calls[0][1] as (job: {
   id: string;
   data: { proofId: string; requestId?: string };
+  attemptsMade?: number;
 }) => Promise<void>;
 
 describe('Verification Worker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.verification.findFirst.mockResolvedValue(null);
     mockPrisma.$transaction.mockImplementation(
       async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
     );
@@ -96,6 +100,7 @@ describe('Verification Worker', () => {
       'verify',
       { proofId: 'proof-1' },
       {
+        jobId: 'proof-1',
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: { count: 1000 },
@@ -261,6 +266,93 @@ describe('Verification Worker', () => {
       data: { status: 'APPROVED' },
     });
     expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
+    expect(mockPrisma.verification.create).toHaveBeenCalledWith({
+      data: {
+        proofId: 'proof-1',
+        verifierId: 'auto-verifier',
+        verdict: 'inconclusive',
+        notes: 'confidence: 0.5',
+      },
+    });
+  });
+
+  it('immediately escalates an inconclusive proof when no validators are available', async () => {
+    mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      taskId: 'task-1',
+      status: 'VERIFYING',
+    });
+    const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      autoVerify: jest.Mock;
+    };
+    autoVerify.mockResolvedValue({
+      verdict: 'inconclusive',
+      confidence: 0.5,
+      notes: 'partial evidence',
+    });
+    const { assignValidators } = jest.requireMock(
+      '../../src/services/validatorService',
+    ) as {
+      assignValidators: jest.Mock;
+    };
+    assignValidators.mockResolvedValue(0);
+
+    await processor({ id: 'job-1', data: { proofId: 'proof-1' }, attemptsMade: 0 });
+
+    expect(mockPrisma.verification.create).toHaveBeenCalledWith({
+      data: {
+        proofId: 'proof-1',
+        verifierId: 'auto-verifier',
+        verdict: 'inconclusive',
+        notes: `partial evidence | ${NO_VALIDATORS_REVIEW_MARKER}`,
+      },
+    });
+    expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+      where: { id: 'proof-1', status: 'VERIFYING' },
+      data: { status: 'PENDING' },
+    });
+    expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
+    expect(notifyProofStatus).not.toHaveBeenCalled();
+  });
+
+  it('resumes a failed attempt without duplicating the manual-review escalation', async () => {
+    mockPrisma.proof.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      taskId: 'task-1',
+      status: 'VERIFYING',
+    });
+    const { autoVerify } = jest.requireMock('../../src/services/verificationService') as {
+      autoVerify: jest.Mock;
+    };
+    autoVerify.mockResolvedValue({ verdict: 'inconclusive', confidence: 0.5, notes: '' });
+    const { assignValidators } = jest.requireMock(
+      '../../src/services/validatorService',
+    ) as {
+      assignValidators: jest.Mock;
+    };
+    assignValidators.mockResolvedValue(0);
+
+    let markerExists = false;
+    mockPrisma.verification.findFirst.mockImplementation(async () =>
+      markerExists ? { id: 'manual-review-1' } : null,
+    );
+    mockPrisma.verification.create.mockImplementation(async () => {
+      markerExists = true;
+      return {};
+    });
+
+    await processor({ id: 'proof-1', data: { proofId: 'proof-1' }, attemptsMade: 0 });
+    await processor({ id: 'proof-1', data: { proofId: 'proof-1' }, attemptsMade: 1 });
+
+    expect(autoVerify).toHaveBeenCalledTimes(2);
+    expect(assignValidators).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.verification.create).toHaveBeenCalledTimes(1);
   });
 
   it('concurrent verification jobs for the same proof are idempotent', async () => {

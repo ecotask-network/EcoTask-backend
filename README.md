@@ -302,13 +302,17 @@ is `NULL` and they remain valid.)
 POST   /api/proofs             # Submit proof (photo + GPS + task_id)
 GET    /api/proofs/:id         # Get proof status
 GET    /api/proofs/user/:id    # Get all proofs by a user
-GET    /api/proofs/review      # List pending proofs for manual review (admin)
+GET    /api/proofs/review      # List pending proofs; ?reviewReason=no_validators filters escalations (admin)
 POST   /api/proofs/:id/review  # Approve/reject an inconclusive proof (admin)
 ```
 
 Proofs that the auto-verifier cannot decide are left for an admin to review via
 `POST /api/proofs/:id/review`, which resolves the verdict, notifies the user,
-and enqueues the reward payout when approved.
+and enqueues the reward payout when approved. If no community validator can be
+assigned, the verification worker immediately moves the proof back to the existing
+`PENDING` admin-reviewable state and records a manual-review marker. Admins can
+list only those proofs with
+`GET /api/proofs/review?reviewReason=no_validators`.
 
 ### Photo analysis
 
