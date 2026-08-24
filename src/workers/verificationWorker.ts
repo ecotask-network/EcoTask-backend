@@ -9,6 +9,7 @@ import logger from '../utils/logger';
 import { redisConnectionManager } from '../utils/redisConnectionManager.js';
 import { getRequestId, runWithRequestContext } from '../utils/requestContext.js';
 import { getQueueRetentionOptions, QUEUE_NAMES } from './queueRetention.js';
+import { getProofTaskApprovalBlockReason } from '../utils/proofApproval.js';
 
 // BullMQ bundles its own ioredis, so its `ConnectionOptions` is a structurally
 // distinct type from our top-level ioredis `Redis`. The cast is purely
@@ -69,7 +70,12 @@ const worker = new Worker<VerificationJobData>(
 
       const proof = await prisma.proof.findUnique({
         where: { id: proofId },
-        select: { userId: true, taskId: true },
+        select: {
+          userId: true,
+          taskId: true,
+          createdAt: true,
+          task: { select: { status: true, expiresAt: true } },
+        },
       });
       if (!proof) throw new Error('Proof not found');
 
@@ -81,12 +87,21 @@ const worker = new Worker<VerificationJobData>(
           let taskCompleted = false;
           let notes = result.notes || `confidence: ${result.confidence}`;
 
-          const slot = await claimCompletionSlot(tx, proof.taskId);
-          if (!slot.claimed) {
+          const approvalBlockReason = getProofTaskApprovalBlockReason(
+            proof.createdAt,
+            proof.task,
+          );
+          if (approvalBlockReason) {
             finalStatus = 'REJECTED';
-            notes += ' [auto-rejected: task reached max completions]';
+            notes += ` [auto-rejected: ${approvalBlockReason}]`;
           } else {
-            taskCompleted = slot.taskCompleted;
+            const slot = await claimCompletionSlot(tx, proof.taskId, proof.createdAt);
+            if (!slot.claimed) {
+              finalStatus = 'REJECTED';
+              notes += ' [auto-rejected: task unavailable or at capacity]';
+            } else {
+              taskCompleted = slot.taskCompleted;
+            }
           }
 
           await tx.proof.update({
@@ -127,7 +142,7 @@ const worker = new Worker<VerificationJobData>(
             });
           }
         } else {
-          logger.info('Auto-approved proof rejected: task at capacity', {
+          logger.info('Auto-approved proof rejected by task approval gate', {
             proofId,
             taskId: proof.taskId,
             ...requestMeta,

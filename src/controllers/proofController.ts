@@ -16,6 +16,7 @@ import { enqueueVerification } from '../workers/verificationWorker.js';
 import { claimCompletionSlot } from '../models/task.js';
 import logger from '../utils/logger.js';
 import { cleanupUploadedFiles } from '../middleware/upload.js';
+import { getProofTaskApprovalBlockReason } from '../utils/proofApproval.js';
 
 type SubmissionEligibility =
   | { status: 404 | 400 | 403 | 409; error: string }
@@ -39,7 +40,10 @@ async function checkSubmissionEligibility(
   if (!task) {
     return { status: 404, error: 'task not found' };
   }
-  if (task.status !== 'ACTIVE') {
+  if (
+    task.status !== 'ACTIVE' ||
+    (task.expiresAt != null && task.expiresAt.getTime() <= Date.now())
+  ) {
     return { status: 400, error: 'task is not active' };
   }
 
@@ -308,7 +312,14 @@ export async function reviewProof(req: Request, res: Response) {
 
   const proof = await prisma.proof.findUnique({
     where: { id: req.params.id },
-    select: { id: true, userId: true, taskId: true, status: true },
+    select: {
+      id: true,
+      userId: true,
+      taskId: true,
+      status: true,
+      createdAt: true,
+      task: { select: { status: true, expiresAt: true } },
+    },
   });
   if (!proof) {
     return res.status(404).json({ error: 'proof not found' });
@@ -325,12 +336,22 @@ export async function reviewProof(req: Request, res: Response) {
     let notes = parsed.data.notes;
 
     if (requestedStatus === 'APPROVED') {
-      const slot = await claimCompletionSlot(tx, proof.taskId);
-      if (!slot.claimed) {
+      const approvalBlockReason = getProofTaskApprovalBlockReason(
+        proof.createdAt,
+        proof.task,
+      );
+      if (approvalBlockReason) {
         finalStatus = 'REJECTED';
-        notes = `${notes ?? ''} [auto-rejected: task reached max completions]`.trim();
+        notes = `${notes ?? ''} [auto-rejected: ${approvalBlockReason}]`.trim();
       } else {
-        taskCompleted = slot.taskCompleted;
+        const slot = await claimCompletionSlot(tx, proof.taskId, proof.createdAt);
+        if (!slot.claimed) {
+          finalStatus = 'REJECTED';
+          notes =
+            `${notes ?? ''} [auto-rejected: task unavailable or at capacity]`.trim();
+        } else {
+          taskCompleted = slot.taskCompleted;
+        }
       }
     }
 

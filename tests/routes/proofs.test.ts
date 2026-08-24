@@ -146,6 +146,24 @@ describe('Proof Routes', () => {
       expect(res.body.error).toBe('task is not active');
     });
 
+    it('returns 400 after the deadline even when the expiry sweep has not run', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        expiresAt: new Date(Date.now() - 1000),
+      });
+
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('task is not active');
+      expect(mockPrisma.taskClaim.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+    });
+
     it('returns 201 and creates proof with photo tied to the active claim', async () => {
       mockPrisma.task.findUnique.mockResolvedValue({ id: 'task-1', status: 'ACTIVE' });
       mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
@@ -669,13 +687,19 @@ describe('Proof Routes', () => {
       });
     });
 
-    it('approves a proof, completes capacity and creates payout outbox row', async () => {
+    it('approves an on-time proof finalized after the task expiry sweep', async () => {
+      const createdAt = new Date('2026-08-23T11:59:59.000Z');
       mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',
         userId: 'user-id',
         taskId: 'task-1',
         status: 'VERIFYING',
+        createdAt,
+        task: {
+          status: 'EXPIRED',
+          expiresAt: new Date('2026-08-23T12:00:00.000Z'),
+        },
       });
       mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.verification.create.mockResolvedValue({});
@@ -698,9 +722,51 @@ describe('Proof Routes', () => {
         .send({ verdict: 'approved' });
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('APPROVED');
-      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1', createdAt);
       expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ proofId: 'proof-1' }),
+      });
+    });
+
+    it('forces an admin approval to rejected when proof was submitted after expiry', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.proof.findUnique.mockResolvedValueOnce({
+        id: 'proof-expired',
+        userId: 'user-id',
+        taskId: 'task-1',
+        status: 'VERIFYING',
+        createdAt: new Date('2026-08-23T12:00:01.000Z'),
+        task: {
+          status: 'EXPIRED',
+          expiresAt: new Date('2026-08-23T12:00:00.000Z'),
+        },
+      });
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.verification.create.mockResolvedValue({});
+      mockPrisma.proof.findUnique.mockResolvedValueOnce({
+        id: 'proof-expired',
+        status: 'REJECTED',
+        photos: [],
+        verifications: [],
+      });
+      const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+        claimCompletionSlot: jest.Mock;
+      };
+
+      const res = await request(app)
+        .post('/proofs/proof-expired/review')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ verdict: 'approved' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('REJECTED');
+      expect(claimCompletionSlot).not.toHaveBeenCalled();
+      expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
+      expect(mockPrisma.verification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          verdict: 'approved',
+          notes: expect.stringContaining('task_expired_before_proof_submission'),
+        }),
       });
     });
   });

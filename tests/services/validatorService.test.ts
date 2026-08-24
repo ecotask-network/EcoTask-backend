@@ -199,6 +199,8 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         taskId: 'task-1',
         status: 'VERIFYING',
+        createdAt: new Date('2026-08-23T11:00:00.000Z'),
+        task: { status: 'ACTIVE', expiresAt: null },
       });
       mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
@@ -232,7 +234,11 @@ describe('ValidatorService', () => {
         mockPrisma,
         'request-1',
       );
-      expect(claimCompletionSlot).toHaveBeenCalledWith(mockPrisma, 'task-1');
+      expect(claimCompletionSlot).toHaveBeenCalledWith(
+        mockPrisma,
+        'task-1',
+        new Date('2026-08-23T11:00:00.000Z'),
+      );
       expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
         data: { proofId: 'proof-1', requestId: 'request-1' },
       });
@@ -253,6 +259,8 @@ describe('ValidatorService', () => {
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         taskId: 'task-1',
         status: 'VERIFYING',
+        createdAt: new Date('2026-08-23T11:00:00.000Z'),
+        task: { status: 'ACTIVE', expiresAt: null },
       });
       mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
@@ -296,10 +304,20 @@ describe('ValidatorService', () => {
 
       mockPrisma.proof.findUnique
         .mockResolvedValueOnce(votesProof(['approved', 'approved']))
-        .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' })
+        .mockResolvedValueOnce({
+          taskId: 'task-1',
+          status: 'VERIFYING',
+          createdAt: new Date('2026-08-23T11:00:00.000Z'),
+          task: { status: 'ACTIVE', expiresAt: null },
+        })
         .mockResolvedValueOnce({ userId: 'owner-1', taskId: 'task-1' })
         .mockResolvedValueOnce(votesProof(['approved', 'approved']))
-        .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' });
+        .mockResolvedValueOnce({
+          taskId: 'task-1',
+          status: 'VERIFYING',
+          createdAt: new Date('2026-08-23T11:00:00.000Z'),
+          task: { status: 'ACTIVE', expiresAt: null },
+        });
 
       let updateManyCount = 0;
       mockPrisma.proof.updateMany.mockImplementation(async () => {
@@ -380,6 +398,45 @@ describe('ValidatorService', () => {
       expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
         where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
         data: { status: 'REJECTED' },
+      });
+    });
+
+    it('forces an approving quorum to reject a proof submitted after expiry', async () => {
+      mockPrisma.proof.findUnique
+        .mockResolvedValueOnce(votesProof(['approved', 'approved', null]))
+        .mockResolvedValueOnce({
+          taskId: 'task-1',
+          status: 'VERIFYING',
+          createdAt: new Date('2026-08-23T12:00:01.000Z'),
+          task: {
+            status: 'EXPIRED',
+            expiresAt: new Date('2026-08-23T12:00:00.000Z'),
+          },
+        });
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.proof.findUnique.mockResolvedValueOnce({
+        userId: 'owner-1',
+        taskId: 'task-1',
+      });
+      mockPrisma.verification.create.mockResolvedValue({});
+      const { claimCompletionSlot } = jest.requireMock('../../src/models/task') as {
+        claimCompletionSlot: jest.Mock;
+      };
+
+      const outcome = await resolveQuorum('proof-1');
+
+      expect(outcome).toEqual({ finalized: true, status: 'REJECTED' });
+      expect(claimCompletionSlot).not.toHaveBeenCalled();
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+        where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
+        data: { status: 'REJECTED' },
+      });
+      expect(mockPrisma.rewardPayout.create).not.toHaveBeenCalled();
+      expect(mockPrisma.verification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          verdict: 'approved',
+          notes: expect.stringContaining('task_expired_before_proof_submission'),
+        }),
       });
     });
   });

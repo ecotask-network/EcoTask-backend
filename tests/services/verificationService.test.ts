@@ -26,6 +26,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     lat: -1.2921,
     lng: 36.8219,
     radiusMeters: 100,
+    status: 'ACTIVE',
     expiresAt: null,
     rewardAmountMicros: 500000000n,
     rewardToken: 'ECO',
@@ -88,7 +89,7 @@ describe('VerificationService', () => {
     expect(result.confidence).toBeLessThan(0.4);
   });
 
-  it('returns inconclusive for partial data (GPS but no photos, expired)', async () => {
+  it('hard-rejects partial proof data submitted after task expiry', async () => {
     const yesterday = new Date(Date.now() - 86400000);
     mockPrisma.proof.findUnique.mockResolvedValue({
       id: 'proof-3',
@@ -100,9 +101,11 @@ describe('VerificationService', () => {
     });
 
     const result = await autoVerify('proof-3');
-    expect(result.verdict).toBe('inconclusive');
-    expect(result.confidence).toBeGreaterThanOrEqual(0.4);
-    expect(result.confidence).toBeLessThan(0.7);
+    expect(result).toEqual({
+      verdict: 'rejected',
+      confidence: 0,
+      notes: 'task_expired_before_proof_submission',
+    });
   });
 
   it('returns inconclusive for proof outside GPS radius', async () => {
@@ -119,7 +122,7 @@ describe('VerificationService', () => {
     expect(result.verdict).toBe('inconclusive');
   });
 
-  it('returns inconclusive for expired task with valid GPS but no photos', async () => {
+  it('hard-rejects an otherwise plausible proof submitted after expiry', async () => {
     const yesterday = new Date(Date.now() - 86400000);
     mockPrisma.proof.findUnique.mockResolvedValue({
       id: 'proof-5',
@@ -131,7 +134,40 @@ describe('VerificationService', () => {
     });
 
     const result = await autoVerify('proof-5');
-    expect(result.verdict).toBe('inconclusive');
+    expect(result.verdict).toBe('rejected');
+    expect(result.confidence).toBe(0);
+  });
+
+  it('allows a proof submitted before the deadline to finalize after the task expires', async () => {
+    const expiresAt = new Date('2026-08-23T12:00:00.000Z');
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      id: 'proof-grandfathered',
+      lat: -1.2921,
+      lng: 36.8219,
+      createdAt: new Date('2026-08-23T11:59:59.000Z'),
+      photos: [{ id: 'photo-1', cid: 'cid-1', filename: 'test.jpg' }],
+      task: makeTask({ status: 'EXPIRED', expiresAt }),
+    });
+
+    const result = await autoVerify('proof-grandfathered');
+
+    expect(result.verdict).toBe('approved');
+  });
+
+  it('treats submission exactly at expiresAt as eligible', async () => {
+    const expiresAt = new Date('2026-08-23T12:00:00.000Z');
+    mockPrisma.proof.findUnique.mockResolvedValue({
+      id: 'proof-at-deadline',
+      lat: -1.2921,
+      lng: 36.8219,
+      createdAt: expiresAt,
+      photos: [{ id: 'photo-1', cid: 'cid-1', filename: 'test.jpg' }],
+      task: makeTask({ status: 'EXPIRED', expiresAt }),
+    });
+
+    const result = await autoVerify('proof-at-deadline');
+
+    expect(result.verdict).toBe('approved');
   });
 
   it('rejects a proof reusing a photo already submitted elsewhere', async () => {
@@ -326,17 +362,17 @@ describe('VerificationService', () => {
     it.each([
       // hasPhotos, inRadius, expired, expectedVerdict, expectedConfidence
       [true, true, false, 'approved', 1.05],
-      [true, true, true, 'approved', 0.85],
+      [true, true, true, 'rejected', 0],
       [true, false, false, 'inconclusive', 0.65],
-      [true, false, true, 'inconclusive', 0.45],
+      [true, false, true, 'rejected', 0],
       // Photo-less proofs: never approved, regardless of how favorable the
       // remaining GPS/expiry signals are — this is the regression guard for
       // the auto-approval bug (in-radius + no-expiry used to score 0.75 and
       // clear the 0.7 approval threshold with zero photographic evidence).
       [false, true, false, 'inconclusive', 0.75],
-      [false, true, true, 'inconclusive', 0.55],
+      [false, true, true, 'rejected', 0],
       [false, false, false, 'rejected', 0.35],
-      [false, false, true, 'rejected', 0.15],
+      [false, false, true, 'rejected', 0],
     ] as const)(
       'hasPhotos=%s inRadius=%s expired=%s → %s (confidence %s)',
       async (hasPhotos, inRadius, expired, expectedVerdict, expectedConfidence) => {
