@@ -32,16 +32,16 @@ describe('redactDetails', () => {
     expect(result.email).toBe('[REDACTED]');
   });
 
-  it('keeps only name/bio/avatarUrl for user.update', () => {
+  it('keeps only name/avatarUrl for user.update, always redacts bio (free-text PII)', () => {
     const body = {
       name: 'Alice',
-      bio: 'eco warrior',
+      bio: 'eco warrior', // bio is always redacted — free-text PII
       email: 'alice@example.com', // sensitive
       webhookUrl: 'https://hooks.example.com', // sensitive
     };
     const result = redactDetails('user.update', body);
     expect(result.name).toBe('Alice');
-    expect(result.bio).toBe('eco warrior');
+    expect(result.bio).toBe('[REDACTED]');
     expect(result.email).toBe('[REDACTED]');
     expect(result.webhookUrl).toBe('[REDACTED]');
   });
@@ -56,11 +56,15 @@ describe('redactDetails', () => {
     expect(result.webhookUrl).toBe('[REDACTED]');
   });
 
-  it('keeps verdict and notes for proof.review', () => {
-    const body = { verdict: 'approved', notes: 'looks good', adminToken: 'secret' };
+  it('redacts notes for proof.review even though it is whitelisted (always-redact PII)', () => {
+    const body = {
+      verdict: 'approved',
+      notes: 'looks good — free text PII',
+      adminToken: 'secret',
+    };
     const result = redactDetails('proof.review', body);
     expect(result.verdict).toBe('approved');
-    expect(result.notes).toBe('looks good');
+    expect(result.notes).toBe('[REDACTED]');
     expect(result.adminToken).toBe('[REDACTED]');
   });
 
@@ -73,6 +77,135 @@ describe('redactDetails', () => {
 
   it('returns empty object for empty body', () => {
     expect(redactDetails('proof.submit', {})).toEqual({});
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #88 — deep redaction and always-redact PII fields
+  // -------------------------------------------------------------------------
+
+  it('always redacts notes regardless of action whitelist — proof.review', () => {
+    // notes appears in proof.review whitelist but must still be redacted
+    const result = redactDetails('proof.review', {
+      verdict: 'rejected',
+      notes: 'User said XYZ',
+    });
+    expect(result.verdict).toBe('rejected');
+    expect(result.notes).toBe('[REDACTED]');
+  });
+
+  it('always redacts notes regardless of action whitelist — validator.review', () => {
+    const result = redactDetails('validator.review', {
+      verdict: 'approved',
+      notes: 'Looks authentic',
+    });
+    expect(result.verdict).toBe('approved');
+    expect(result.notes).toBe('[REDACTED]');
+  });
+
+  it('always redacts bio regardless of action whitelist — user.update', () => {
+    const result = redactDetails('user.update', {
+      name: 'Bob',
+      bio: 'Lives in NYC, age 34',
+    });
+    expect(result.name).toBe('Bob');
+    expect(result.bio).toBe('[REDACTED]');
+  });
+
+  it('redacts nested object values inside a whitelisted top-level field', () => {
+    // task.create whitelists 'title'; if someone sends title as an object its
+    // nested content should still be sanitised
+    const result = redactDetails('task.create', {
+      title: 'Clean the park',
+      rewardAmount: 10,
+      metadata: { internalNote: 'admin only', safe: true }, // not whitelisted → redacted at top
+    });
+    expect(result.title).toBe('Clean the park');
+    expect(result.rewardAmount).toBe(10);
+    expect(result.metadata).toBe('[REDACTED]'); // top-level non-whitelisted
+  });
+
+  it('sanitises nested objects within a whitelisted key — keeps safe scalars, redacts sensitive sub-keys', () => {
+    // Simulate a whitelisted key whose value happens to be a compound object
+    // with nested sensitive fields (e.g. notes buried inside)
+    const result = redactDetails('proof.submit', {
+      taskId: 'task-1',
+      lat: 10,
+      lng: 20,
+      extra: {
+        notes: 'private note inside nested object',
+        safe: 42,
+      },
+    });
+    expect(result.taskId).toBe('task-1');
+    // extra is not whitelisted — redacted at top level
+    expect(result.extra).toBe('[REDACTED]');
+  });
+
+  it('redacts notes nested inside a top-level whitelisted compound value', () => {
+    // Fabricate a scenario: whitelist a key that contains nested notes/bio to
+    // verify sanitiseValue() catches them even inside compound values.
+    // We do this via user.update → avatarUrl whitelisted, but value is an
+    // object that contains a notes sub-key.
+    const result = redactDetails('user.update', {
+      name: 'Carol',
+      avatarUrl: {
+        url: 'https://cdn.example.com/avatar.png',
+        notes: 'admin label', // ALWAYS_REDACT even inside a nested object
+      } as unknown as string,
+    });
+    expect(result.name).toBe('Carol');
+    const avatarUrl = result.avatarUrl as Record<string, unknown>;
+    expect(avatarUrl.url).toBe('https://cdn.example.com/avatar.png');
+    expect(avatarUrl.notes).toBe('[REDACTED]');
+  });
+
+  it('sanitises arrays — redacts sensitive keys inside array element objects', () => {
+    const result = redactDetails('task.create', {
+      title: 'Park clean',
+      tags: [
+        { label: 'eco', notes: 'hidden note' },
+        { label: 'outdoor', score: 5 },
+      ] as unknown as string,
+    });
+    expect(result.title).toBe('Park clean');
+    // tags is not whitelisted — redacted entirely
+    expect(result.tags).toBe('[REDACTED]');
+  });
+
+  it('proof.submit body with notes at top level is always redacted', () => {
+    // notes is NOT in proof.submit whitelist, but this also tests the
+    // ALWAYS_REDACT path for a non-whitelisted field
+    const result = redactDetails('proof.submit', {
+      taskId: 'task-99',
+      lat: 51.5,
+      lng: -0.1,
+      notes: 'I found rubbish near the gate',
+    });
+    expect(result.taskId).toBe('task-99');
+    expect(result.notes).toBe('[REDACTED]');
+  });
+
+  it('handles deeply nested objects recursively — PII does not leak at any depth', () => {
+    const result = redactDetails('user.update', {
+      name: 'Dave',
+      avatarUrl: {
+        meta: {
+          bio: 'nested bio PII',
+          size: 1024,
+          inner: {
+            notes: 'deep notes PII',
+            timestamp: 1234567890,
+          },
+        },
+      } as unknown as string,
+    });
+    const avatarUrl = result.avatarUrl as Record<string, unknown>;
+    const meta = avatarUrl.meta as Record<string, unknown>;
+    expect(meta.bio).toBe('[REDACTED]');
+    expect(meta.size).toBe(1024);
+    const inner = meta.inner as Record<string, unknown>;
+    expect(inner.notes).toBe('[REDACTED]');
+    expect(inner.timestamp).toBe(1234567890);
   });
 });
 
