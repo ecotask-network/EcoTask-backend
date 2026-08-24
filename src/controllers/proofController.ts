@@ -8,7 +8,7 @@ import {
   reviewProofSchema,
   MAX_PAGINATION_LIMIT,
 } from '../utils/validation.js';
-import { uploadToIPFS } from '../services/ipfsService.js';
+import { uploadToIPFS, removeFromIPFS } from '../services/ipfsService.js';
 import { isWithinZone } from '../services/geoService.js';
 import { hashFile, extractPhotoMetadata } from '../services/photoService.js';
 import { notifyProofStatus } from '../services/notificationService.js';
@@ -78,6 +78,18 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
     filesCleaned = true;
     await cleanupUploadedFiles(files);
   };
+  // CIDs newly uploaded to IPFS during this request. IPFS lives outside the
+  // DB transaction, so any path that ends without a committed proof (a
+  // failed upload batch, a failed commit, or a failed post-commit enqueue)
+  // must reclaim them instead of leaving them permanently orphaned.
+  const uploadedCids: string[] = [];
+  let cidsCleaned = false;
+  const cleanupUploadedCids = async () => {
+    if (cidsCleaned) return;
+    cidsCleaned = true;
+    if (!uploadedCids.length) return;
+    await Promise.all(uploadedCids.map((cid) => removeFromIPFS(cid)));
+  };
   const respond = async (status: number, body: unknown) => {
     await cleanupFiles();
     return res.status(status).json(body);
@@ -104,7 +116,7 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
     const preparedPhotos: Array<{
       cid: string;
       filename: string;
-      sha256: string;
+      sha256: string | null;
       width: number | null;
       height: number | null;
       capturedAt: Date | null;
@@ -112,19 +124,43 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
       gpsLng: number | null;
     }> = [];
     try {
-      // IPFS is external to the database transaction. Prepare every CID first;
-      // if any preparation fails, no proof or photo row becomes visible.
-      const photoResults = await Promise.allSettled(
+      // Hashing/metadata extraction is cheap and local; safe to run fully
+      // in parallel before touching IPFS or the DB.
+      const hashedFiles = await Promise.all(
         (files ?? []).map(async (file) => {
           const [sha256, metadata] = await Promise.all([
             hashFile(file.path),
             extractPhotoMetadata(file.path),
           ]);
-          const cid = await uploadToIPFS(file.path, file.filename);
+          return { file, sha256, metadata };
+        }),
+      );
+
+      // Content-address dedup: a photo whose bytes already exist under a
+      // previously-committed CID reuses that CID instead of re-uploading.
+      // proof_photos.sha256 is unique, so only the row that already owns a
+      // hash may store it — a reused row's sha256 is left null.
+      const hashes = [...new Set(hashedFiles.map((h) => h.sha256))];
+      const existingPhotos = hashes.length
+        ? await prisma.proofPhoto.findMany({
+            where: { sha256: { in: hashes } },
+            select: { sha256: true, cid: true },
+          })
+        : [];
+      const cidByHash = new Map(existingPhotos.map((p) => [p.sha256 as string, p.cid]));
+
+      // IPFS is external to the database transaction. Prepare every CID first;
+      // if any preparation fails, no proof or photo row becomes visible, and
+      // whatever was newly uploaded before the failure is reclaimed below.
+      const photoResults = await Promise.allSettled(
+        hashedFiles.map(async ({ file, sha256, metadata }) => {
+          const existingCid = cidByHash.get(sha256);
+          const cid = existingCid ?? (await uploadToIPFS(file.path, file.filename));
+          if (!existingCid) uploadedCids.push(cid);
           return {
             cid,
             filename: file.originalname,
-            sha256,
+            sha256: existingCid ? null : sha256,
             width: metadata.width,
             height: metadata.height,
             capturedAt: metadata.capturedAt,
@@ -145,6 +181,7 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
         userId,
         requestId: req.requestId,
       });
+      await cleanupUploadedCids();
       return respond(500, { error: 'failed to process proof photos' });
     }
 
@@ -195,6 +232,7 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
     });
 
     if (commitResult.status !== 201) {
+      await cleanupUploadedCids();
       return respond(commitResult.status, { error: commitResult.error });
     }
 
@@ -228,12 +266,14 @@ export async function submitProof(req: Request, res: Response, next: NextFunctio
           requestId: req.requestId,
         });
       }
+      await cleanupUploadedCids();
       throw err;
     }
 
     return respond(201, commitResult.proof);
   } catch (err) {
     await cleanupFiles();
+    await cleanupUploadedCids();
     return next(err);
   } finally {
     await cleanupFiles();
