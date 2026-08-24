@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma.js';
+import { formatRewardAmount } from '../utils/reward.js';
 
 export async function getLeaderboard(req: Request, res: Response) {
   const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
@@ -52,7 +53,7 @@ export async function getLeaderboard(req: Request, res: Response) {
     name: userMap.get(userId)?.name || null,
     avatarUrl: userMap.get(userId)?.avatarUrl || null,
     approvedProofs: agg.count,
-    totalReward: Number(agg.rewardMicros) / 10000000,
+    totalReward: formatRewardAmount(agg.rewardMicros),
   }));
 
   res.json({ leaderboard, period });

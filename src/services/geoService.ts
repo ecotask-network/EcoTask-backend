@@ -40,10 +40,19 @@ export function buildBoundingBoxFilter(
   neLng?: number,
 ): Record<string, object> | undefined {
   if (swLat == null || swLng == null || neLat == null || neLng == null) return undefined;
-  return {
-    lat: { gte: swLat, lte: neLat },
-    lng: { gte: swLng, lte: neLng },
-  };
+
+  const lat = { gte: swLat, lte: neLat };
+
+  // When the viewport crosses the antimeridian (swLng > neLng, e.g. a
+  // search window of 170 -> -170), a single `lng BETWEEN swLng AND neLng`
+  // predicate matches nothing. Split into the two valid hemispheres:
+  // (swLng .. 180] union [-180 .. neLng].
+  const lng =
+    swLng <= neLng
+      ? { gte: swLng, lte: neLng }
+      : { OR: [{ gte: swLng }, { lte: neLng }] };
+
+  return { lat, lng };
 }
 
 function toRad(deg: number): number {

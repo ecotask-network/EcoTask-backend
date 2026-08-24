@@ -13,6 +13,9 @@ import { logAudit, AuditOutcome } from '../services/auditService.js';
 /**
  * Top-level request body fields that are safe to record for each action.
  * Anything not listed here is redacted.
+ *
+ * Note: even if a field appears in this whitelist it will still be redacted
+ * if it is also listed in ALWAYS_REDACT_FIELDS (e.g. `notes`, `bio`).
  */
 const FIELD_WHITELIST: Record<string, Set<string>> = {
   'proof.submit': new Set(['taskId', 'lat', 'lng']),
@@ -50,8 +53,64 @@ const FIELD_WHITELIST: Record<string, Set<string>> = {
 };
 
 /**
- * Return a copy of `body` with any field not in the whitelist for `action`
- * replaced by the string "[REDACTED]". Unknown actions whitelist nothing.
+ * Fields that contain free-text user input and must ALWAYS be redacted,
+ * regardless of whether they appear in the action's whitelist. This covers
+ * known PII-bearing fields such as proof/validator review notes and user bios.
+ */
+const ALWAYS_REDACT_FIELDS = new Set<string>(['notes', 'bio']);
+
+/**
+ * Recursively sanitise a value that was reached via a whitelisted key.
+ *
+ * - Primitive scalars (string, number, boolean, null) are returned as-is.
+ * - Arrays are mapped through this function element-by-element; non-scalar
+ *   elements that are not plain objects are replaced with "[REDACTED]".
+ * - Plain objects are recursively processed: only primitive-valued keys that
+ *   are NOT in ALWAYS_REDACT_FIELDS survive; everything else is redacted.
+ *
+ * This prevents nested PII from leaking through whitelisted compound values.
+ */
+function sanitiseValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') {
+    // Primitive scalar — safe as-is
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      item === null || typeof item !== 'object' ? item : sanitiseValue(item),
+    );
+  }
+
+  // Plain object — keep only primitive-valued, non-sensitive keys
+  const obj = value as Record<string, unknown>;
+  const sanitised: Record<string, unknown> = {};
+
+  for (const key of Object.keys(obj)) {
+    if (ALWAYS_REDACT_FIELDS.has(key)) {
+      sanitised[key] = '[REDACTED]';
+    } else if (obj[key] === null || typeof obj[key] !== 'object') {
+      sanitised[key] = obj[key];
+    } else {
+      sanitised[key] = sanitiseValue(obj[key]);
+    }
+  }
+
+  return sanitised;
+}
+
+/**
+ * Return a copy of `body` safe to persist in the audit log.
+ *
+ * Rules applied in order:
+ *  1. Any field in ALWAYS_REDACT_FIELDS is replaced with "[REDACTED]"
+ *     regardless of the action whitelist (e.g. `notes`, `bio`).
+ *  2. Any field not in the action's whitelist is replaced with "[REDACTED]".
+ *  3. Whitelisted, non-sensitive fields whose value is a nested object or
+ *     array are passed through sanitiseValue(), which recursively applies
+ *     the same rules so nested PII is never stored verbatim.
+ *
+ * Unknown actions whitelist nothing, so every field is redacted.
  */
 export function redactDetails(
   action: string,
@@ -61,7 +120,15 @@ export function redactDetails(
   const result: Record<string, unknown> = {};
 
   for (const key of Object.keys(body)) {
-    result[key] = allowed.has(key) ? body[key] : '[REDACTED]';
+    if (ALWAYS_REDACT_FIELDS.has(key)) {
+      // Always redact known free-text PII fields, even if whitelisted
+      result[key] = '[REDACTED]';
+    } else if (!allowed.has(key)) {
+      result[key] = '[REDACTED]';
+    } else {
+      // Whitelisted key — sanitise nested structures before storing
+      result[key] = sanitiseValue(body[key]);
+    }
   }
 
   return result;

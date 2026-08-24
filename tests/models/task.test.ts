@@ -202,4 +202,105 @@ describe('task model: listTasks composite cursor pagination', () => {
       expect(call.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
     });
   });
+
+  describe('geo bounding-box filtering', () => {
+    interface GeoFixtureTask {
+      id: string;
+      createdAt: Date;
+      title: string;
+      lat: number;
+      lng: number;
+    }
+
+    function fakeGeoFindMany(tasks: GeoFixtureTask[]) {
+      return jest.fn(
+        async ({ where, take }: { where: Record<string, unknown>; take: number }) => {
+          let rows = tasks;
+          const and = (where.AND as Array<Record<string, unknown>>) || [];
+          for (const cond of and) {
+            if (cond.lat) {
+              const { gte, lte } = cond.lat as { gte: number; lte: number };
+              rows = rows.filter((t) => t.lat >= gte && t.lat <= lte);
+            }
+            if (cond.lng) {
+              const lng = cond.lng as
+                | { gte: number; lte: number }
+                | { OR: Array<{ gte?: number; lte?: number }> };
+              if ('OR' in lng) {
+                rows = rows.filter(
+                  (t) =>
+                    t.lng >= (lng.OR[0].gte as number) ||
+                    t.lng <= (lng.OR[1].lte as number),
+                );
+              } else {
+                rows = rows.filter((t) => t.lng >= lng.gte && t.lng <= lng.lte);
+              }
+            }
+          }
+          return rows.slice(0, take);
+        },
+      );
+    }
+
+    it('returns only tasks inside a non-crossing bounding box', async () => {
+      const fixture: GeoFixtureTask[] = [
+        {
+          id: 'a',
+          createdAt: new Date('2024-01-01T00:00:00Z'),
+          title: 'in',
+          lat: 41,
+          lng: 15,
+        },
+        {
+          id: 'b',
+          createdAt: new Date('2024-01-02T00:00:00Z'),
+          title: 'out',
+          lat: 41,
+          lng: 25,
+        },
+      ];
+      mockPrisma.task.findMany.mockImplementation(fakeGeoFindMany(fixture));
+
+      const { items } = await listTasks({ swLat: 40, swLng: 10, neLat: 42, neLng: 20 });
+
+      expect(items.map((t) => t.id)).toEqual(['a']);
+    });
+
+    it('returns tasks that wrap the antimeridian (swLng > neLng)', async () => {
+      const fixture: GeoFixtureTask[] = [
+        {
+          id: 'east',
+          createdAt: new Date('2024-01-01T00:00:00Z'),
+          title: 'east',
+          lat: 0,
+          lng: 179,
+        },
+        {
+          id: 'west',
+          createdAt: new Date('2024-01-02T00:00:00Z'),
+          title: 'west',
+          lat: 0,
+          lng: -179,
+        },
+        {
+          id: 'middle',
+          createdAt: new Date('2024-01-03T00:00:00Z'),
+          title: 'mid',
+          lat: 0,
+          lng: 0,
+        },
+      ];
+      mockPrisma.task.findMany.mockImplementation(fakeGeoFindMany(fixture));
+
+      // Window 170 -> -170 crosses the date line; only east/west qualify.
+      const { items } = await listTasks({
+        swLat: -10,
+        swLng: 170,
+        neLat: 10,
+        neLng: -170,
+      });
+
+      expect(items.map((t) => t.id).sort()).toEqual(['east', 'west']);
+    });
+  });
 });

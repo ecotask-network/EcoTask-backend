@@ -23,7 +23,7 @@ jest.mock('../../src/utils/prisma', () => ({
       update: jest.fn(),
       updateMany: jest.fn(),
     },
-    proofPhoto: { create: jest.fn(), deleteMany: jest.fn() },
+    proofPhoto: { create: jest.fn(), deleteMany: jest.fn(), findMany: jest.fn() },
     verification: { create: jest.fn() },
     rewardPayout: { create: jest.fn() },
     $transaction: jest.fn(),
@@ -62,6 +62,7 @@ jest.mock('../../src/services/rateLimitService', () => ({
 jest.mock('../../src/services/ipfsService', () => ({
   uploadToIPFS: jest.fn().mockResolvedValue('mock-cid-test'),
   uploadMultipleToIPFS: jest.fn(),
+  removeFromIPFS: jest.fn().mockResolvedValue(undefined),
 }));
 
 import prisma from '../../src/utils/prisma';
@@ -78,7 +79,7 @@ const mockPrisma = prisma as unknown as {
     count: jest.Mock;
     update: jest.Mock;
   };
-  proofPhoto: { create: jest.Mock; deleteMany: jest.Mock };
+  proofPhoto: { create: jest.Mock; deleteMany: jest.Mock; findMany: jest.Mock };
   verification: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -98,10 +99,15 @@ function userToken(): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+  const { uploadToIPFS, removeFromIPFS } = jest.requireMock(
+    '../../src/services/ipfsService',
+  ) as {
     uploadToIPFS: jest.Mock;
+    removeFromIPFS: jest.Mock;
   };
   uploadToIPFS.mockResolvedValue('mock-cid-test');
+  removeFromIPFS.mockResolvedValue(undefined);
+  mockPrisma.proofPhoto.findMany.mockResolvedValue([]);
   mockPrisma.$transaction.mockImplementation(async (arg: unknown) => {
     // Interactive-transaction form used by submitProof: the callback receives
     // the mock client itself, so tx.task/tx.taskClaim/... hit the same mocks.
@@ -200,6 +206,46 @@ describe('Proof Routes', () => {
       ) as { enqueueVerification: jest.Mock };
       expect(enqueueVerification).toHaveBeenCalledWith(
         'proof-1',
+        res.headers['x-request-id'],
+      );
+    });
+
+    it('enqueues GPS-mismatch proofs for verification', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        lat: -1.2921,
+        lng: 36.8219,
+        radiusMeters: 100,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      mockPrisma.proof.create.mockResolvedValue({
+        id: 'proof-gps-mismatch',
+        userId: 'user-id',
+        taskId: 'task-1',
+        claimId: 'claim-1',
+        status: 'PENDING',
+        notes: 'gps_photo_mismatch',
+        photos: [{ id: 'photo-1', cid: 'mock-cid-test', filename: 'test-proof.jpg' }],
+        verifications: [],
+      });
+
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .field('lat', '-1.2921')
+        .field('lng', '36.8219')
+        .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
+
+      expect(res.status).toBe(201);
+
+      const { enqueueVerification } = jest.requireMock(
+        '../../src/workers/verificationWorker',
+      ) as { enqueueVerification: jest.Mock };
+
+      expect(enqueueVerification).toHaveBeenCalledWith(
+        'proof-gps-mismatch',
         res.headers['x-request-id'],
       );
     });
@@ -405,6 +451,101 @@ describe('Proof Routes', () => {
         where: { id: 'proof-1' },
       });
       expect(uploadPaths.every((filePath) => !fs.existsSync(filePath))).toBe(true);
+
+      const { removeFromIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+        removeFromIPFS: jest.Mock;
+      };
+      expect(removeFromIPFS).toHaveBeenCalledWith('mock-cid-test');
+    });
+
+    it('reclaims the uploaded CID when the commit transaction rejects the submission', async () => {
+      // Preflight passes, but the task goes inactive before the commit
+      // transaction re-checks eligibility (e.g. a racing update). The photo
+      // was already uploaded to IPFS by then and must not be orphaned.
+      mockPrisma.task.findUnique
+        .mockResolvedValueOnce({
+          id: 'task-1',
+          status: 'ACTIVE',
+          lat: -1.2921,
+          lng: 36.8219,
+          radiusMeters: 100,
+        })
+        .mockResolvedValueOnce({
+          id: 'task-1',
+          status: 'COMPLETED',
+          lat: -1.2921,
+          lng: 36.8219,
+          radiusMeters: 100,
+        });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('task is not active');
+      expect(mockPrisma.proof.create).not.toHaveBeenCalled();
+
+      const { removeFromIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+        removeFromIPFS: jest.Mock;
+      };
+      expect(removeFromIPFS).toHaveBeenCalledWith('mock-cid-test');
+    });
+
+    it('reuses an existing CID for identical photo content instead of re-uploading', async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        id: 'task-1',
+        status: 'ACTIVE',
+        lat: -1.2921,
+        lng: 36.8219,
+        radiusMeters: 100,
+      });
+      mockPrisma.taskClaim.findFirst.mockResolvedValue({ id: 'claim-1' });
+      // Actual sha256 of tests/fixtures/test-proof.jpg (photoService is not
+      // mocked in this suite, so the DB stub must match the real hash).
+      const FIXTURE_SHA256 =
+        '14a60aa42782ac2efdda944662bf67c84ed5f7e78a2eff2199fde5db781fb9c1';
+      mockPrisma.proofPhoto.findMany.mockResolvedValue([
+        { sha256: FIXTURE_SHA256, cid: 'existing-cid' },
+      ]);
+      mockPrisma.proof.create.mockResolvedValue({
+        id: 'proof-dedup',
+        userId: 'user-id',
+        taskId: 'task-1',
+        claimId: 'claim-1',
+        status: 'PENDING',
+        photos: [{ id: 'photo-1', cid: 'existing-cid', filename: 'test-proof.jpg' }],
+        verifications: [],
+      });
+
+      const res = await request(app)
+        .post('/proofs')
+        .set('Authorization', `Bearer ${userToken()}`)
+        .field('taskId', VALID_UUID)
+        .attach('photos', path.join(__dirname, '../fixtures/test-proof.jpg'));
+
+      expect(res.status).toBe(201);
+      const { uploadToIPFS } = jest.requireMock('../../src/services/ipfsService') as {
+        uploadToIPFS: jest.Mock;
+      };
+      expect(uploadToIPFS).not.toHaveBeenCalled();
+      expect(mockPrisma.proof.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            photos: {
+              create: [
+                expect.objectContaining({
+                  cid: 'existing-cid',
+                  sha256: null,
+                }),
+              ],
+            },
+          }),
+        }),
+      );
     });
   });
 
@@ -570,7 +711,7 @@ describe('Proof Routes', () => {
     it('lists pending proofs for admins', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
       mockPrisma.proof.findMany.mockResolvedValue([
-        { id: 'proof-1', status: 'VERIFYING', photos: [], user: {}, task: {} },
+        { id: 'proof-1', status: 'PENDING', photos: [], user: {}, task: {} },
       ]);
       mockPrisma.proof.count.mockResolvedValue(1);
       const res = await request(app)
@@ -581,6 +722,36 @@ describe('Proof Routes', () => {
       expect(mockPrisma.proof.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: { in: ['PENDING', 'VERIFYING'] } },
+        }),
+      );
+    });
+
+    it('lists no-validator escalations through the admin review filter', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+      mockPrisma.proof.findMany.mockResolvedValue([
+        { id: 'proof-1', status: 'VERIFYING', photos: [], user: {}, task: {} },
+      ]);
+      mockPrisma.proof.count.mockResolvedValue(1);
+
+      const res = await request(app)
+        .get('/proofs/review')
+        .query({ reviewReason: 'no_validators' })
+        .set('Authorization', `Bearer ${userToken()}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveLength(1);
+      expect(mockPrisma.proof.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            status: { in: ['PENDING', 'VERIFYING'] },
+            verifications: {
+              some: {
+                verifierId: 'auto-verifier',
+                verdict: 'inconclusive',
+                notes: { contains: 'no validators available; escalated to admin review' },
+              },
+            },
+          },
         }),
       );
     });
@@ -633,7 +804,7 @@ describe('Proof Routes', () => {
       expect(res.status).toBe(409);
     });
 
-    it('rejects a proof and records the verification', async () => {
+    it('allows an admin to reject a no-validator escalated proof', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
       mockPrisma.proof.findUnique.mockResolvedValueOnce({
         id: 'proof-1',

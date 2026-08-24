@@ -1,5 +1,6 @@
 import prisma from '../utils/prisma.js';
 import { decodeCursor, encodeCursor } from '../utils/cursor.js';
+import { buildBoundingBoxFilter } from '../services/geoService.js';
 import type { Prisma } from '@prisma/client';
 
 export interface TaskFilters {
@@ -29,16 +30,14 @@ export async function listTasks(filters: TaskFilters = {}) {
     where.rewardAmountMicros = rewardFilter;
   }
 
-  if (
-    filters.swLat != null &&
-    filters.swLng != null &&
-    filters.neLat != null &&
-    filters.neLng != null
-  ) {
-    where.AND = [
-      { lat: { gte: filters.swLat, lte: filters.neLat } },
-      { lng: { gte: filters.swLng, lte: filters.neLng } },
-    ];
+  const bbox = buildBoundingBoxFilter(
+    filters.swLat,
+    filters.swLng,
+    filters.neLat,
+    filters.neLng,
+  );
+  if (bbox) {
+    where.AND = [bbox];
   }
 
   if (filters.cursor) {
@@ -131,7 +130,11 @@ export type SlotClaimResult =
  * callers serialize on this row, and a caller that loses the race gets
  * zero rows back instead of a stale count.
  */
-type SlotRow = { completed_count: number; max_completions: number | null; status: string };
+type SlotRow = {
+  completed_count: number;
+  max_completions: number | null;
+  status: string;
+};
 
 export async function claimCompletionSlot(
   tx: Prisma.TransactionClient,

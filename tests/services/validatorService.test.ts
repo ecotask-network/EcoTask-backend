@@ -2,6 +2,8 @@ import {
   assignValidators,
   listPendingReviews,
   castVote,
+  escalateToManualReview,
+  NO_VALIDATORS_REVIEW_MARKER,
   resolveQuorum,
 } from '../../src/services/validatorService';
 
@@ -17,7 +19,7 @@ jest.mock('../../src/utils/prisma', () => ({
       update: jest.fn(),
       findMany: jest.fn(),
     },
-    verification: { create: jest.fn() },
+    verification: { create: jest.fn(), findFirst: jest.fn() },
     rewardPayout: { create: jest.fn() },
     $transaction: jest.fn(),
   },
@@ -54,7 +56,7 @@ const mockPrisma = prisma as unknown as {
     update: jest.Mock;
     findMany: jest.Mock;
   };
-  verification: { create: jest.Mock };
+  verification: { create: jest.Mock; findFirst: jest.Mock };
   rewardPayout: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -111,7 +113,7 @@ describe('ValidatorService', () => {
       });
     });
 
-    it('skips proofs that already have assigned votes', async () => {
+    it('reports existing assignments without creating duplicates', async () => {
       mockPrisma.proof.findUnique.mockResolvedValue({
         userId: 'owner-1',
         status: 'VERIFYING',
@@ -120,7 +122,7 @@ describe('ValidatorService', () => {
 
       const assigned = await assignValidators('proof-1');
 
-      expect(assigned).toBe(0);
+      expect(assigned).toBe(2);
       expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
     });
 
@@ -147,6 +149,57 @@ describe('ValidatorService', () => {
       const assigned = await assignValidators('proof-1');
 
       expect(assigned).toBe(0);
+    });
+  });
+
+  describe('escalateToManualReview', () => {
+    it('creates one durable marker and remains idempotent on retry', async () => {
+      mockPrisma.proof.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      let markerExists = false;
+      mockPrisma.verification.findFirst.mockImplementation(async () =>
+        markerExists ? { id: 'manual-review-1' } : null,
+      );
+      mockPrisma.verification.create.mockImplementation(async () => {
+        markerExists = true;
+        return {};
+      });
+
+      await expect(escalateToManualReview('proof-1', 'partial evidence')).resolves.toBe(
+        true,
+      );
+      await expect(escalateToManualReview('proof-1', 'partial evidence')).resolves.toBe(
+        true,
+      );
+
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+        where: { id: 'proof-1', status: 'VERIFYING' },
+        data: { status: 'PENDING' },
+      });
+      expect(mockPrisma.verification.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.verification.create).toHaveBeenCalledWith({
+        data: {
+          proofId: 'proof-1',
+          verifierId: 'auto-verifier',
+          verdict: 'inconclusive',
+          notes: `partial evidence | ${NO_VALIDATORS_REVIEW_MARKER}`,
+        },
+      });
+    });
+
+    it('does not mark a proof that a finalizer already resolved', async () => {
+      mockPrisma.verification.findFirst.mockResolvedValue(null);
+      mockPrisma.proof.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(escalateToManualReview('proof-1')).resolves.toBe(false);
+
+      expect(mockPrisma.proof.updateMany).toHaveBeenCalledWith({
+        where: { id: 'proof-1', status: 'VERIFYING' },
+        data: { status: 'PENDING' },
+      });
+      expect(mockPrisma.verification.create).not.toHaveBeenCalled();
     });
   });
 
@@ -281,11 +334,57 @@ describe('ValidatorService', () => {
       const updateCalls = mockPrisma.user.update.mock.calls;
       expect(updateCalls).toEqual(
         expect.arrayContaining([
+          [{ where: { id: 'v0' }, data: { reviewCount: { increment: 1 } } }],
+          [{ where: { id: 'v1' }, data: { reviewCount: { increment: 1 } } }],
+          [{ where: { id: 'v2' }, data: { reviewCount: { increment: 1 } } }],
           [{ where: { id: 'v0' }, data: { validatorReputation: { increment: 1 } } }],
           [{ where: { id: 'v1' }, data: { validatorReputation: { increment: 1 } } }],
           [{ where: { id: 'v2' }, data: { validatorReputation: { decrement: 1 } } }],
         ]),
       );
+    });
+
+    it('does not increment reviewCount when finalization rolls back', async () => {
+      mockPrisma.validatorVote.findUnique.mockResolvedValue({
+        id: 'vote-1',
+        verdict: null,
+        proof: { status: 'VERIFYING' },
+      });
+      mockPrisma.validatorVote.update.mockResolvedValue({});
+
+      mockPrisma.proof.findUnique.mockResolvedValueOnce(
+        votesProof(['approved', 'approved', null]),
+      );
+
+      mockPrisma.$transaction.mockImplementationOnce(
+        async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+          const tx = {
+            ...mockPrisma,
+            proof: {
+              ...mockPrisma.proof,
+              findUnique: jest
+                .fn()
+                .mockResolvedValueOnce({ taskId: 'task-1', status: 'VERIFYING' })
+                .mockResolvedValueOnce({ userId: 'owner-1', taskId: 'task-1' }),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            user: {
+              update: jest
+                .fn()
+                .mockRejectedValue(new Error('db fault during finalization')),
+            },
+            verification: { create: jest.fn() },
+            rewardPayout: { create: jest.fn() },
+          };
+          return fn(tx as typeof mockPrisma);
+        },
+      );
+
+      await expect(castVote('proof-1', 'v1', 'approved')).rejects.toThrow(
+        'db fault during finalization',
+      );
+
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
     it('concurrent finalizeProof calls are idempotent', async () => {
@@ -357,10 +456,15 @@ describe('ValidatorService', () => {
     it('escalates to admin when all votes are split without a quorum', async () => {
       mockPrisma.proof.findUnique.mockResolvedValue(votesProof(['approved']));
       mockPrisma.verification.create.mockResolvedValue({});
+      mockPrisma.user.update.mockResolvedValue({});
 
       const outcome = await resolveQuorum('proof-1');
 
       expect(outcome).toEqual({ finalized: false, escalated: true });
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'v0' },
+        data: { reviewCount: { increment: 1 } },
+      });
       expect(mockPrisma.verification.create).toHaveBeenCalledWith({
         data: {
           proofId: 'proof-1',

@@ -15,6 +15,7 @@ import analyticsRoutes from './routes/analytics.js';
 import auditRoutes from './routes/audit.js';
 import notificationRoutes from './routes/notifications.js';
 import adminNotificationRoutes from './routes/adminNotifications.js';
+import adminQueueRoutes from './routes/adminQueues.js';
 import validatorRoutes from './routes/validators.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { apiLimiter, authLimiter, proofLimiter } from './middleware/rateLimit.js';
@@ -75,6 +76,7 @@ app.use('/analytics', analyticsRoutes);
 app.use('/audit', auditRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/admin', adminNotificationRoutes);
+app.use('/admin', adminQueueRoutes);
 app.use(validatorRoutes);
 
 app.use((_req, res) => {
@@ -106,6 +108,10 @@ if (process.env.NODE_ENV !== 'test') {
         await import('./workers/notificationWorker.js');
       await shutdownNotificationWorker();
       logger.info('Notification dispatch worker shut down');
+
+      const { closeAdminQueues } = await import('./services/queueAdminService.js');
+      await closeAdminQueues();
+      logger.info('Admin queue connections closed');
 
       await redisConnectionManager.close();
       logger.info('Redis connection closed');

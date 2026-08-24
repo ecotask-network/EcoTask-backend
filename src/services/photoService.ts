@@ -25,6 +25,12 @@ export interface PhotoMetadata {
   gpsLat: number | null;
   /** GPS longitude parsed from EXIF, if present. */
   gpsLng: number | null;
+  /**
+   * Indicates whether the file could not be decoded as a valid image (e.g. corrupt header,
+   * non-image binary, or file read error).
+   * Note: Missing EXIF on an otherwise valid image does not make it corrupt.
+   */
+  isCorrupt: boolean;
 }
 
 /**
@@ -110,6 +116,7 @@ function parseExifGps(tags: ExifReader.Tags): {
 const MAX_EXIF_SCAN_BYTES = 128 * 1024;
 
 export async function extractPhotoMetadata(filePath: string): Promise<PhotoMetadata> {
+  let buffer: Buffer;
   try {
     // NOTE on the non-blocking tradeoff: `exifreader` and `image-size` are
     // both synchronous, in-memory-buffer APIs — decoding EXIF tags and
@@ -127,23 +134,66 @@ export async function extractPhotoMetadata(filePath: string): Promise<PhotoMetad
     // decode work for each file gets interleaved across event-loop ticks
     // instead of one file's read+decode fully blocking before the next
     // file's read even starts.
-    const buffer = await fs.promises.readFile(filePath);
-    // Decode real dimensions from image headers — never trust EXIF for this.
-    const { width, height } = decodeActualDimensions(buffer);
+    buffer = await fs.promises.readFile(filePath);
+  } catch {
+    return {
+      width: null,
+      height: null,
+      capturedAt: null,
+      gpsLat: null,
+      gpsLng: null,
+      isCorrupt: true,
+    };
+  }
+
+  // Decode real dimensions from image headers — never trust EXIF for this.
+  const { width, height } = decodeActualDimensions(buffer);
+  if (width === null || height === null) {
+    return {
+      width: null,
+      height: null,
+      capturedAt: null,
+      gpsLat: null,
+      gpsLng: null,
+      isCorrupt: true,
+    };
+  }
+
+  let capturedAt: Date | null = null;
+  let gpsLat: number | null = null;
+  let gpsLng: number | null = null;
+
+  try {
     const exifSource =
       buffer.length > MAX_EXIF_SCAN_BYTES
         ? buffer.subarray(0, MAX_EXIF_SCAN_BYTES)
         : buffer;
     const tags = ExifReader.load(exifSource);
-    return {
-      width,
-      height,
-      capturedAt: parseCaptureTime(tags),
-      ...parseExifGps(tags),
-    };
+    capturedAt = parseCaptureTime(tags);
+    const gps = parseExifGps(tags);
+    gpsLat = gps.gpsLat;
+    gpsLng = gps.gpsLng;
   } catch {
-    return { width: null, height: null, capturedAt: null, gpsLat: null, gpsLng: null };
+    // Legitimate images without EXIF metadata or with unhandled tags are not corrupt.
+    // Dimensions remain valid, with EXIF fields staying null.
   }
+
+  return {
+    width,
+    height,
+    capturedAt,
+    gpsLat,
+    gpsLng,
+    isCorrupt: false,
+  };
+}
+
+export function isCorruptPhoto(photo: {
+  width?: number | null;
+  height?: number | null;
+  isCorrupt?: boolean;
+}): boolean {
+  return photo.isCorrupt === true || photo.width == null || photo.height == null;
 }
 
 export function hasMinimumResolution(photo: {
