@@ -182,6 +182,7 @@ const worker = new Worker<VerificationJobData>(
               proofId,
               verifierId: 'auto-verifier',
               verdict: result.verdict,
+              effectiveVerdict: result.verdict,
               notes: result.notes || `confidence: ${result.confidence}`,
             },
           });

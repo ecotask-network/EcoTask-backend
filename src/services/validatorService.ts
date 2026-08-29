@@ -63,6 +63,7 @@ export async function escalateToManualReview(
     proofId,
     verifierId: MANUAL_REVIEW_VERIFIER_ID,
     verdict: 'inconclusive',
+    effectiveVerdict: 'inconclusive',
     notes: { contains: NO_VALIDATORS_REVIEW_MARKER },
   };
 
@@ -195,6 +196,7 @@ export async function resolveQuorum(
           proofId,
           verifierId: AUTO_VERIFIER_ID,
           verdict: 'inconclusive',
+          effectiveVerdict: 'inconclusive',
           notes: 'no quorum reached; escalated to admin review',
         },
       });
