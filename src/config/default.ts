@@ -90,5 +90,11 @@ export default {
       10,
     ),
     challengeIssueMax: parseInt(process.env.CHALLENGE_ISSUE_RATE_LIMIT_MAX || '10', 10),
+    denylistCircuitBreaker: {
+      /** Number of consecutive Redis failures before the circuit opens. */
+      failureThreshold: parseInt(process.env.DENYLIST_CB_FAILURE_THRESHOLD || '3', 10),
+      /** Milliseconds to stay open before attempting a half-open probe. */
+      cooldownMs: parseInt(process.env.DENYLIST_CB_COOLDOWN_MS || String(30_000), 10),
+    },
   },
 };
