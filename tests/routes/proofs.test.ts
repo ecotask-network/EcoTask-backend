@@ -835,6 +835,7 @@ describe('Proof Routes', () => {
           proofId: 'proof-1',
           verifierId: 'admin-id',
           verdict: 'rejected',
+          effectiveVerdict: 'rejected',
           notes: 'GPS outside radius',
         },
       });

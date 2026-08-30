@@ -405,6 +405,10 @@ export const reviewProof = asyncHandler(async (req: Request, res: Response) => {
         proofId: proof.id,
         verifierId: req.user!.userId,
         verdict: parsed.data.verdict,
+        // effectiveVerdict always matches the resulting Proof.status
+        // (lower-case). When a capacity check overrides an 'approved'
+        // human verdict the two fields intentionally differ.
+        effectiveVerdict: finalStatus.toLowerCase(),
         notes,
       },
     });

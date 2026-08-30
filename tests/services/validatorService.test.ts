@@ -289,6 +289,15 @@ describe('ValidatorService', () => {
       expect(mockPrisma.rewardPayout.create).toHaveBeenCalledWith({
         data: { proofId: 'proof-1', requestId: 'request-1' },
       });
+      // effectiveVerdict must match the actual Proof.status
+      expect(mockPrisma.verification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            verdict: 'approved',
+            effectiveVerdict: 'approved',
+          }),
+        }),
+      );
     });
 
     it('rewards agreeing validators reputation and penalizes dissenters', async () => {
@@ -461,6 +470,7 @@ describe('ValidatorService', () => {
           proofId: 'proof-1',
           verifierId: 'quorum',
           verdict: 'inconclusive',
+          effectiveVerdict: 'inconclusive',
           notes: expect.stringContaining('admin review'),
         },
       });
@@ -485,6 +495,15 @@ describe('ValidatorService', () => {
         where: { id: 'proof-1', status: { in: ['PENDING', 'VERIFYING'] } },
         data: { status: 'REJECTED' },
       });
+      // effectiveVerdict must match the actual Proof.status
+      expect(mockPrisma.verification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            verdict: 'rejected',
+            effectiveVerdict: 'rejected',
+          }),
+        }),
+      );
     });
   });
 });

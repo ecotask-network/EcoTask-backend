@@ -123,6 +123,7 @@ async function seed(): Promise<void> {
     proofId: `${RUN}-p-${(i % PROOFS) + 1}`,
     verifierId: `${RUN}-u-${(i % USERS) + 1}`,
     verdict: 'approved',
+    effectiveVerdict: 'approved',
     createdAt: new Date(),
   }));
   for (let i = 0; i < verifications.length; i += 1000) {

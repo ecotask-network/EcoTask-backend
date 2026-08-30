@@ -146,12 +146,18 @@ model ProofPhoto {
 }
 
 model Verification {
-  id         String   @id @default(uuid())
-  proofId    String   @map("proof_id")
-  verifierId String   @map("verifier_id")
-  verdict    String
-  notes      String?
-  createdAt  DateTime @default(now()) @map("created_at")
+  id              String   @id @default(uuid())
+  proofId         String   @map("proof_id")
+  verifierId      String   @map("verifier_id")
+  verdict         String
+  // The verdict that was actually applied to the Proof (always matches the
+  // resulting Proof.status in lower-case). Differs from `verdict` only when a
+  // capacity check overrides an 'approved' intent and the proof ends up
+  // REJECTED. Backfilled for existing rows via migration
+  // 20260822000000_add_verification_effective_verdict.
+  effectiveVerdict String   @map("effective_verdict")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
 
   proof Proof @relation(fields: [proofId], references: [id])
 
