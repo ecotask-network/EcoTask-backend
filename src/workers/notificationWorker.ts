@@ -70,13 +70,13 @@ export function startNotificationWorker(): void {
   worker = new Worker<NotificationJobData>(
     queueName,
     async (job) => {
-      const { notificationId, requestId } = job.data;
+      const { notificationId, outboxId, requestId } = job.data;
       return runWithRequestContext(requestId, async () => {
         logger.info('Dispatching notification', {
           notificationId,
           ...(requestId ? { requestId } : {}),
         });
-        await dispatchNotification(notificationId);
+        await dispatchNotification(notificationId, outboxId);
       });
     },
     { connection: getConnection() },
