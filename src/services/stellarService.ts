@@ -6,9 +6,10 @@ import {
   Networks,
   BASE_FEE,
   Horizon,
+  Memo,
 } from '@stellar/stellar-sdk';
 const Server = Horizon.Server;
-import { randomBytes, randomUUID } from 'crypto';
+import { randomBytes, randomUUID, createHash } from 'crypto';
 import config from '../config/default';
 import logger from '../utils/logger.js';
 
@@ -34,10 +35,11 @@ interface RewardParams {
   taskId: string;
   amount: string;
   assetCode: string;
+  payoutId: string;
 }
 
 export async function submitReward(params: RewardParams): Promise<string> {
-  const { userWallet, taskId, amount, assetCode } = params;
+  const { userWallet, taskId, amount, assetCode, payoutId } = params;
 
   if (!config.stellar.oracleSecretKey || config.stellar.oracleSecretKey === 'mock') {
     logger.info('Mock Stellar reward', {
@@ -45,8 +47,9 @@ export async function submitReward(params: RewardParams): Promise<string> {
       assetCode,
       userWallet,
       taskId,
+      payoutId,
     });
-    return `mock-tx-${randomUUID()}`;
+    return `mock-tx-${payoutId}`;
   }
 
   const oracleKeypair = Keypair.fromSecret(config.stellar.oracleSecretKey);
@@ -67,6 +70,35 @@ export async function submitReward(params: RewardParams): Promise<string> {
   const sign = isNegative ? '-' : '';
   const decimalAmount = `${sign}${integerPart}.${fractionalPart.toString().padStart(7, '0')}`;
 
+  const payoutMemo = createHash('sha256').update(payoutId).digest('hex');
+
+  let existingTx;
+  try {
+    const records = await server
+      .transactions()
+      .forAccount(userWallet)
+      .order('desc')
+      .limit(50)
+      .call();
+      
+    existingTx = records.records.find((tx: any) => {
+      if (tx.memo_type !== 'hash') return false;
+      const memoHex = Buffer.from(tx.memo, 'base64').toString('hex');
+      return tx.memo === payoutMemo || memoHex === payoutMemo;
+    });
+  } catch (err: any) {
+    if (err.response && err.response.status === 404) {
+      // Account not found, ignore
+    } else {
+      throw err;
+    }
+  }
+
+  if (existingTx) {
+    logger.info('Found existing transaction for payout', { payoutId, txHash: existingTx.hash });
+    return existingTx.hash;
+  }
+
   const transaction = new TransactionBuilder(oracleAccount, {
     fee: BASE_FEE,
     networkPassphrase:
@@ -79,6 +111,7 @@ export async function submitReward(params: RewardParams): Promise<string> {
         amount: decimalAmount,
       }),
     )
+    .addMemo(Memo.hash(payoutMemo))
     .setTimeout(30)
     .build();
 
